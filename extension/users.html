@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Realman — Dashboard</title>
+<style>
+  :root {
+    --bg:      #F0F2FF;
+    --surface: #FFFFFF;
+    --border:  #E2E5F8;
+    --text:    #1A1D2E;
+    --muted:   #6B7280;
+    --primary: #5B6AF0;
+    --green:   #0EA371;
+    --red:     #E5484D;
+    --gh:      #24292f;
+    --slack:   #4A154B;
+    --radius:  10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0 }
+  body {
+    font: 13px/1.5 system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* Header */
+  .topbar {
+    background: linear-gradient(135deg,#5B6AF0,#8B5CF6);
+    padding: 14px 24px;
+    display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo {
+    width: 34px; height: 34px; border-radius: 9px;
+    background: rgba(255,255,255,.2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px; font-weight: 800; color: #fff; flex-shrink: 0;
+  }
+  .topbar-title { color: #fff; font-size: 16px; font-weight: 700 }
+  .topbar-sub   { color: rgba(255,255,255,.65); font-size: 11px }
+  .topbar-right { margin-left: auto; display: flex; gap: 8px; align-items: center }
+
+  .btn {
+    border: none; border-radius: 8px; padding: 7px 14px;
+    font: 600 12px system-ui; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px;
+    transition: filter .15s, transform .08s;
+  }
+  .btn:hover  { filter: brightness(1.08) }
+  .btn:active { transform: scale(.97) }
+  .btn-ghost  { background: rgba(255,255,255,.18); color: #fff; border: 1.5px solid rgba(255,255,255,.3) }
+  .btn-ghost:hover { background: rgba(255,255,255,.26) }
+  .btn-primary { background: var(--primary); color: #fff }
+  .btn-red     { background: var(--red); color: #fff }
+
+  /* Toolbar */
+  .toolbar {
+    padding: 12px 24px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  .search-wrap { position: relative; flex: 1; min-width: 200px; max-width: 420px }
+  .search-wrap input {
+    width: 100%; border: 1.5px solid var(--border); border-radius: 8px;
+    padding: 7px 10px 7px 32px; font: 13px system-ui;
+    background: var(--surface); color: var(--text); outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .search-wrap input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(91,106,240,.15) }
+  .search-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 14px; pointer-events: none }
+  .count-badge { font-size: 11px; color: var(--muted); white-space: nowrap }
+
+  /* Filter pills */
+  .filter-pills { display: flex; gap: 6px }
+  .pill {
+    padding: 4px 10px; border-radius: 20px; border: 1.5px solid var(--border);
+    font: 600 11px system-ui; cursor: pointer; background: var(--surface);
+    color: var(--muted); transition: all .15s; white-space: nowrap;
+  }
+  .pill.active { background: var(--primary); color: #fff; border-color: var(--primary) }
+
+  /* Table */
+  .table-wrap {
+    padding: 0 24px 24px;
+    overflow-x: auto;
+  }
+  table {
+    width: 100%; border-collapse: collapse;
+    background: var(--surface);
+    border: 1.5px solid var(--border); border-radius: var(--radius);
+    overflow: hidden;
+  }
+  thead { background: var(--bg) }
+  th {
+    padding: 9px 12px; text-align: left;
+    font: 700 11px system-ui; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .5px;
+    border-bottom: 1.5px solid var(--border);
+    white-space: nowrap; cursor: pointer; user-select: none;
+  }
+  th:hover { color: var(--primary) }
+  th .sort-icon { margin-left: 3px; opacity: .4; font-style: normal }
+  th.asc  .sort-icon { opacity: 1; content: '▲' }
+  th.desc .sort-icon { opacity: 1 }
+  td {
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    font-size: 12px; vertical-align: middle;
+    max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none }
+  tr:hover td { background: var(--bg) }
+
+  .avatar-cell { width: 32px; padding: 6px 8px }
+  .avatar-cell img { width: 28px; height: 28px; border-radius: 50%; display: block }
+  .login-cell  { font-weight: 700 }
+  .login-cell a { color: var(--text); text-decoration: none }
+  .login-cell a:hover { color: var(--primary) }
+  .email-cell a { color: var(--primary); text-decoration: none }
+  .email-cell a:hover { text-decoration: underline }
+  .pill-gh    { background: var(--gh);    color: #fff; padding: 1px 7px; border-radius: 20px; font-size: 9px; font-weight: 700 }
+  .pill-slack { background: var(--slack); color: #fff; padding: 1px 7px; border-radius: 20px; font-size: 9px; font-weight: 700 }
+  .num { text-align: right; color: var(--muted) }
+  .tag-yes { color: var(--green); font-weight: 700; font-size: 11px }
+  .copy-cell { width: 28px; padding: 4px; text-align: center }
+  .copy-cell button {
+    border: none; background: none; cursor: pointer; font-size: 13px;
+    opacity: 0; border-radius: 4px; padding: 2px; transition: opacity .12s;
+  }
+  tr:hover .copy-cell button { opacity: 1 }
+
+  .empty-state {
+    padding: 60px 24px; text-align: center; color: var(--muted);
+  }
+  .empty-state .icon { font-size: 48px; display: block; margin-bottom: 12px }
+  .empty-state p { font-size: 14px; line-height: 2 }
+
+  /* Tooltip for long text */
+  td[title] { cursor: default }
+
+  /* Page tabs */
+  .page-tabs {
+    display: flex; gap: 0; background: var(--surface);
+    border-bottom: 1.5px solid var(--border); padding: 0 24px;
+  }
+  .page-tab {
+    padding: 10px 18px; font: 600 12px system-ui; cursor: pointer;
+    color: var(--muted); border-bottom: 3px solid transparent;
+    transition: color .15s; user-select: none; white-space: nowrap;
+  }
+  .page-tab:hover { color: var(--text) }
+  .page-tab.active { color: var(--primary); border-bottom-color: var(--primary) }
+
+  .page { display: none }
+  .page.active { display: block }
+
+  /* Sent history */
+  .history-wrap { padding: 20px 24px; display: flex; flex-direction: column; gap: 14px }
+  .log-card {
+    background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .log-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: var(--bg);
+    border-bottom: 1.5px solid var(--border); cursor: pointer;
+  }
+  .log-header:hover { background: #e8eaff }
+  .log-date   { font-weight: 700; font-size: 12px }
+  .log-subject { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  .log-count  { font-size: 11px; background: var(--primary); color: #fff; border-radius: 20px; padding: 1px 8px; white-space: nowrap }
+  .log-body   { padding: 12px 14px; display: none }
+  .log-body.open { display: block }
+  .log-subject-full { font-weight: 700; margin-bottom: 6px; font-size: 13px }
+  .log-msg    { font-size: 12px; color: var(--muted); white-space: pre-wrap; background: var(--bg); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; max-height: 120px; overflow-y: auto }
+  .log-recipients { display: flex; flex-wrap: wrap; gap: 6px }
+  .recipient-chip {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--bg); border: 1.5px solid var(--border);
+    border-radius: 8px; padding: 4px 8px; font-size: 11px;
+  }
+  .recipient-chip img { width: 20px; height: 20px; border-radius: 50% }
+  .recipient-chip .r-name { font-weight: 600 }
+  .recipient-chip .r-email { color: var(--muted) }
+  .log-empty { padding: 60px 24px; text-align: center; color: var(--muted) }
+  .log-empty .icon { font-size: 40px; display: block; margin-bottom: 10px }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">R</div>
+  <div style="flex:1">
+    <div class="topbar-title">Realman Dashboard</div>
+    <div class="topbar-sub" id="topbar-sub">Loading…</div>
+  </div>
+  <div class="topbar-right" id="users-actions">
+    <button class="btn btn-ghost" id="export-btn">⬇ Export CSV</button>
+    <label  class="btn btn-ghost" style="cursor:pointer">⬆ Import CSV<input type="file" id="import-csv" accept=".csv" style="display:none"></label>
+    <button class="btn btn-ghost" id="copy-emails-btn">📋 Copy Emails</button>
+    <button class="btn btn-red"   id="clear-btn">🗑 Clear All</button>
+  </div>
+  <div class="topbar-right" id="history-actions" style="display:none">
+    <button class="btn btn-red" id="clear-log-btn">🗑 Clear History</button>
+  </div>
+</div>
+
+<div class="page-tabs">
+  <div class="page-tab active" data-page="users">👥 Collected Users</div>
+  <div class="page-tab" data-page="history">📨 Sent History</div>
+</div>
+
+<!-- Users page -->
+<div class="page active" id="page-users">
+  <div class="toolbar">
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input id="search" placeholder="Search by name, email, location, company…" autocomplete="off">
+    </div>
+    <div class="filter-pills">
+      <div class="pill active" data-filter="all">All</div>
+      <div class="pill" data-filter="gh">GitHub</div>
+      <div class="pill" data-filter="slack">Slack</div>
+      <div class="pill" data-filter="hireable">Hireable</div>
+      <div class="pill" data-filter="location">Has Location</div>
+      <div class="pill" data-filter="blocked">🚫 Blocked</div>
+    </div>
+    <span class="count-badge" id="count-badge"></span>
+  </div>
+  <div class="table-wrap">
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th class="avatar-cell"></th>
+          <th data-col="login">Username <i class="sort-icon">↕</i></th>
+          <th data-col="name">Name <i class="sort-icon">↕</i></th>
+          <th data-col="email">Email <i class="sort-icon">↕</i></th>
+          <th data-col="location">Location <i class="sort-icon">↕</i></th>
+          <th data-col="company">Company <i class="sort-icon">↕</i></th>
+          <th data-col="followers" class="num">Followers <i class="sort-icon">↕</i></th>
+          <th data-col="repos" class="num">Repos <i class="sort-icon">↕</i></th>
+          <th data-col="hireable">Hireable <i class="sort-icon">↕</i></th>
+          <th data-col="twitter">Twitter <i class="sort-icon">↕</i></th>
+          <th data-col="seen_at">Collected <i class="sort-icon">↕</i></th>
+          <th class="copy-cell"></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty-state" id="empty" style="display:none">
+      <span class="icon">🔍</span>
+      <p>No users found.<br>Collect emails from the extension first.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Sent History page -->
+<div class="page" id="page-history">
+  <div class="history-wrap" id="history-wrap">
+    <div class="log-empty" id="history-empty">
+      <span class="icon">📭</span>
+      <p>No campaigns sent yet.<br>Use the Send tab in the extension to send emails.</p>
+    </div>
+  </div>
+</div>
+
+<script src="users.js"></script>
+</body>
+</html>

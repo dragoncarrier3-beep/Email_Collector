@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Realman",
+  "version": "2.0.0",
+  "description": "Collect emails from GitHub & Slack, then send campaigns via Gmail.",
+  "permissions": ["storage", "activeTab", "tabs", "alarms", "identity"],
+  "host_permissions": [
+    "https://github.com/*",
+    "https://api.github.com/*",
+    "https://slack.com/*",
+    "https://gmail.googleapis.com/*",
+    "https://www.googleapis.com/*"
+  ],
+  "oauth2": {
+    "client_id": "152589721057-ffelveeod2e8f52m1ugfh231710pff2o.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/gmail.send"]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": { "128": "icon.png" }
+  },
+  "icons": { "128": "icon.png" },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

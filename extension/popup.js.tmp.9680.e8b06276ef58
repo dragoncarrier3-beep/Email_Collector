@@ -1,0 +1,237 @@
+// popup.js
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'saved') renderSaved();
+  });
+});
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function memberRow(e, showCopy = true) {
+  return `<div class="row-item">
+    <div class="avatar"><img src="https://github.com/${e.login}.png?size=56" loading="lazy"></div>
+    <div class="info">
+      <div class="login"><a href="https://github.com/${esc(e.login)}" target="_blank" style="color:inherit;text-decoration:none">@${esc(e.login)}</a></div>
+      <div class="email" title="${esc(e.email)}">${esc(e.email)}</div>
+    </div>
+    ${showCopy ? `<button class="copy-btn" data-email="${esc(e.email)}" title="Copy">📋</button>` : ''}
+  </div>`;
+}
+
+function bindCopy(container) {
+  container.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(btn.dataset.email);
+      btn.textContent = '✓'; setTimeout(() => btn.textContent = '📋', 1500);
+    });
+  });
+}
+
+// ── Settings ───────────────────────────────────────────────────────────────
+chrome.storage.local.get(['ghToken'], d => {
+  if (d.ghToken) document.getElementById('token-input').value = d.ghToken;
+});
+
+document.getElementById('save-settings').addEventListener('click', () => {
+  const token = document.getElementById('token-input').value.trim();
+  chrome.storage.local.set({ ghToken: token }, () => {
+    const msg = document.getElementById('save-msg');
+    msg.style.display = 'inline';
+    setTimeout(() => msg.style.display = 'none', 2000);
+  });
+});
+
+// ── Saved tab ──────────────────────────────────────────────────────────────
+function renderSaved() {
+  chrome.storage.local.get(['emails'], d => {
+    const emails = d.emails || [];
+    const list = document.getElementById('saved-list');
+    document.getElementById('badge').textContent = emails.length ? `(${emails.length})` : '';
+    if (!emails.length) {
+      list.innerHTML = '<div class="empty">No emails saved yet.<br>Use the Collect tab to get started.</div>';
+      return;
+    }
+    list.innerHTML = emails.map(e => memberRow(e)).join('');
+    bindCopy(list);
+  });
+}
+renderSaved();
+
+document.getElementById('export-btn').addEventListener('click', () => {
+  chrome.storage.local.get(['emails'], d => {
+    const emails = d.emails || [];
+    const csv = ['login,email,profile,seen_at',
+      ...emails.map(e => ['login','email','profile','seen_at']
+        .map(k => `"${String(e[k]??'').replace(/"/g,'""')}"`)
+        .join(','))
+    ].join('\n');
+    const url = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    Object.assign(document.createElement('a'),{href:url,download:`github-emails-${new Date().toISOString().slice(0,10)}.csv`}).click();
+    URL.revokeObjectURL(url);
+  });
+});
+
+document.getElementById('copy-all-btn').addEventListener('click', () => {
+  chrome.storage.local.get(['emails'], d => {
+    navigator.clipboard.writeText((d.emails||[]).map(e=>e.email).join('\n'));
+    const btn = document.getElementById('copy-all-btn');
+    btn.textContent='✓ Copied!'; setTimeout(()=>btn.textContent='📋 Copy all',1500);
+  });
+});
+
+document.getElementById('clear-all-btn').addEventListener('click', () => {
+  if (!confirm('Delete all saved emails?')) return;
+  chrome.storage.local.set({emails:[]}, () => { renderSaved(); chrome.action.setBadgeText({text:''}); });
+});
+
+// ── Collect tab ────────────────────────────────────────────────────────────
+let running = false;
+let stopFlag = false;
+const collectList = document.getElementById('collect-list');
+const progressWrap = document.getElementById('progress-wrap');
+const pbar = document.getElementById('pbar');
+const plabel = document.getElementById('plabel');
+const startBtn = document.getElementById('start-btn');
+const stopBtn = document.getElementById('stop-btn');
+
+document.getElementById('clear-collect').addEventListener('click', () => {
+  collectList.innerHTML = '<div class="empty">Enter an org name or usernames above and click Start.</div>';
+});
+
+function setProgress(done, total, msg) {
+  progressWrap.classList.add('visible');
+  pbar.style.width = total ? `${Math.round(done/total*100)}%` : '0%';
+  plabel.textContent = msg;
+}
+
+function addRow(entry) {
+  if (collectList.querySelector('.empty')) collectList.innerHTML = '';
+  collectList.insertAdjacentHTML('afterbegin', memberRow(entry));
+  bindCopy(collectList);
+}
+
+async function ghFetch(path, token) {
+  const res = await fetch('https://api.github.com' + path, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'realman-extension',
+      'X-GitHub-Api-Version': '2022-11-28',
+    }
+  });
+  if (!res.ok) throw new Error(`GitHub API ${res.status} for ${path}`);
+  return res.json();
+}
+
+async function getOrgMembers(org, token) {
+  const logins = [];
+  let page = 1;
+  while (true) {
+    const batch = await ghFetch(`/orgs/${org}/members?per_page=100&page=${page}`, token);
+    if (!Array.isArray(batch) || !batch.length) break;
+    logins.push(...batch.map(m => m.login));
+    if (batch.length < 100) break;
+    page++;
+  }
+  return logins;
+}
+
+async function saveEmail(entry) {
+  return new Promise(resolve => {
+    chrome.storage.local.get(['emails'], d => {
+      const emails = d.emails || [];
+      if (!emails.find(e => e.login === entry.login)) {
+        emails.unshift(entry);
+        chrome.storage.local.set({ emails }, () => {
+          chrome.action.setBadgeText({ text: String(emails.length) });
+          chrome.action.setBadgeBackgroundColor({ color: '#2363eb' });
+        });
+      }
+      resolve();
+    });
+  });
+}
+
+async function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+startBtn.addEventListener('click', async () => {
+  if (running) return;
+
+  const target = document.getElementById('target').value.trim();
+  if (!target) { alert('Enter an org name or usernames.'); return; }
+
+  const { ghToken } = await new Promise(r => chrome.storage.local.get(['ghToken'], r));
+  if (!ghToken) {
+    alert('Set your GitHub token in the Settings tab first.');
+    document.querySelectorAll('.tab')[2].click();
+    return;
+  }
+
+  running = true; stopFlag = false;
+  startBtn.style.display = 'none'; stopBtn.style.display = '';
+  collectList.innerHTML = '';
+  progressWrap.classList.add('visible');
+
+  try {
+    // Decide: org or comma-separated usernames
+    let logins;
+    if (target.includes(',')) {
+      logins = target.split(',').map(s => s.trim()).filter(Boolean);
+    } else {
+      setProgress(0, 0, `Fetching members of @${target}…`);
+      try {
+        logins = await getOrgMembers(target, ghToken);
+      } catch {
+        // Fall back to treating it as a single username
+        logins = [target];
+      }
+    }
+
+    let done = 0, found = 0;
+    setProgress(0, logins.length, `0 / ${logins.length} checked — ${found} emails found`);
+
+    for (const login of logins) {
+      if (stopFlag) break;
+      try {
+        const user = await ghFetch(`/users/${login}`, ghToken);
+        if (user.email) {
+          found++;
+          const entry = {
+            login: user.login,
+            email: user.email,
+            profile: `https://github.com/${user.login}`,
+            seen_at: new Date().toISOString(),
+          };
+          addRow(entry);
+          await saveEmail(entry);
+        }
+      } catch { /* skip */ }
+      done++;
+      setProgress(done, logins.length, `${done} / ${logins.length} checked — ${found} emails found`);
+      await delay(220); // polite API delay
+    }
+
+    setProgress(logins.length, logins.length,
+      stopFlag
+        ? `Stopped — ${found} emails found`
+        : `✓ Done — ${found} email${found!==1?'s':''} found from ${logins.length} users`
+    );
+    if (!collectList.children.length || collectList.querySelector('.empty')) {
+      collectList.innerHTML = '<div class="empty">No public emails found for these users.</div>';
+    }
+  } catch (err) {
+    setProgress(0, 0, `Error: ${err.message}`);
+  } finally {
+    running = false;
+    startBtn.style.display = ''; stopBtn.style.display = 'none';
+  }
+});
+
+stopBtn.addEventListener('click', () => { stopFlag = true; });

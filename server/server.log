@@ -1,0 +1,8 @@
+[2026-10-06 18:54:27] Realman server starting…
+[2026-10-06 18:54:27] DB: 1348 emails | 0 sent
+[2026-10-06 18:54:27] Campaign: 50 emails/day · 1 every 28.8 min · hard daily cap enforced
+[2026-10-06 18:54:27] Dashboard → http://localhost:3000
+[2026-10-06 18:54:48] ⚠ Gmail auth failed: connect ETIMEDOUT 10.10.7.111:587
+[2026-10-06 18:54:48]   SMTP may be blocked locally — will work on VPS.
+[2026-10-06 18:54:48] Ready. Use the dashboard buttons or type: start | stop | status | quit
+Commands: start | stop | status | quit

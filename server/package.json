@@ -1,0 +1,14 @@
+{
+  "name": "realman-server",
+  "version": "1.0.0",
+  "description": "GitHub email collector + Gmail campaign sender",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "nodemailer": "^6.9.14",
+    "sql.js": "^1.12.0"
+  }
+}

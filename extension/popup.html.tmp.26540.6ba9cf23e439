@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Realman</title>
+  <style>
+    :root {
+      --bg:      #F0F2FF;
+      --surface: #FFFFFF;
+      --border:  #E2E5F8;
+      --text:    #1A1D2E;
+      --muted:   #6B7280;
+      --primary: #5B6AF0;
+      --green:   #0EA371;
+      --red:     #E5484D;
+      --gh:      #24292f;
+      --slack:   #4A154B;
+      --radius:  10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0 }
+    body {
+      font: 13px/1.5 system-ui, sans-serif;
+      width: 380px; min-height: 260px;
+      background: var(--bg); color: var(--text);
+      display: flex; flex-direction: column;
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg,#5B6AF0,#8B5CF6);
+      padding: 10px 14px 0; flex-shrink: 0;
+    }
+    .header-top { display:flex; align-items:center; gap:8px; margin-bottom:10px }
+    .logo {
+      width:30px; height:30px; border-radius:8px;
+      background:rgba(255,255,255,.2);
+      display:flex; align-items:center; justify-content:center;
+      font-size:16px; font-weight:800; color:#fff;
+    }
+    .brand     { color:#fff; font-size:15px; font-weight:700 }
+    .brand-sub { color:rgba(255,255,255,.65); font-size:10px }
+
+    /* Tabs */
+    .tabs { display:flex }
+    .tab {
+      flex:1; padding:7px 4px 6px; text-align:center; cursor:pointer;
+      font-size:11px; font-weight:600; color:rgba(255,255,255,.55);
+      border-bottom:3px solid transparent; white-space:nowrap;
+      transition:color .15s; user-select:none;
+    }
+    .tab:hover  { color:rgba(255,255,255,.85) }
+    .tab.active { color:#fff; border-bottom-color:#fff }
+
+    section { display:none; flex-direction:column; flex:1 }
+    section.active { display:flex }
+
+    /* Buttons */
+    .btn {
+      border:none; border-radius:8px; padding:7px 14px;
+      font:600 12px system-ui; cursor:pointer; white-space:nowrap;
+      display:inline-flex; align-items:center; gap:5px;
+      transition:filter .15s, transform .08s;
+    }
+    .btn:hover  { filter:brightness(1.08) }
+    .btn:active { transform:scale(.97) }
+    .btn-ghost  { background:var(--surface); color:var(--text); border:1.5px solid var(--border) }
+    .btn-ghost:hover { background:var(--bg) }
+    .btn-primary { background:var(--primary); color:#fff }
+    .btn-green   { background:var(--green);   color:#fff }
+    .btn-red     { background:var(--red);     color:#fff }
+    .btn-gh      { background:var(--gh);      color:#fff }
+    .btn-slack   { background:var(--slack);   color:#fff }
+    .btn-stop    { background:var(--red);     color:#fff }
+    .btn-big {
+      width:100%; padding:11px; font-size:13px;
+      border-radius:10px; justify-content:center;
+    }
+
+    .row { display:flex; gap:6px; align-items:center }
+
+    /* Forms */
+    .field-label {
+      font-size:10px; font-weight:700; color:var(--muted);
+      text-transform:uppercase; letter-spacing:.5px;
+      display:block; margin-bottom:4px;
+    }
+    input, textarea {
+      width:100%; border:1.5px solid var(--border); border-radius:8px;
+      padding:7px 10px; font:13px system-ui; outline:none;
+      background:var(--surface); color:var(--text);
+      transition:border-color .15s, box-shadow .15s;
+    }
+    input:focus, textarea:focus {
+      border-color:var(--primary);
+      box-shadow:0 0 0 3px rgba(91,106,240,.15);
+    }
+    .hint { font-size:10px; color:var(--muted); margin-top:3px; line-height:1.6 }
+    .hint a { color:var(--primary) }
+
+    /* Cards */
+    .card {
+      background:var(--surface); border:1.5px solid var(--border);
+      border-radius:var(--radius); padding:12px;
+    }
+    .card-header {
+      display:flex; align-items:center; gap:7px; margin-bottom:10px;
+    }
+    .src-dot {
+      width:24px; height:24px; border-radius:6px; flex-shrink:0;
+      display:flex; align-items:center; justify-content:center;
+      font-size:13px; font-weight:700; color:#fff;
+    }
+    .src-dot.gh    { background:var(--gh)    }
+    .src-dot.slack { background:var(--slack)  }
+    .card-title  { font-size:12px; font-weight:700; flex:1 }
+    .card-hint   { font-size:10px; color:var(--muted) }
+
+    /* Collect */
+    .panel { padding:10px; display:flex; flex-direction:column; gap:8px }
+
+    /* Progress */
+    .prog-wrap { padding:0 10px 10px; display:none }
+    .prog-wrap.visible { display:block }
+    .prog-card {
+      background:var(--surface); border:1.5px solid var(--border);
+      border-radius:var(--radius); padding:10px 12px;
+    }
+    .prog-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px }
+    .prog-status { font-size:11px; font-weight:600; color:var(--text) }
+    .prog-count  { font-size:18px; font-weight:800; color:var(--primary); line-height:1 }
+    .prog-count-lbl { font-size:9px; color:var(--muted); text-align:right }
+    .prog-track {
+      background:var(--border); border-radius:6px; height:8px;
+      overflow:hidden; margin-bottom:6px; position:relative;
+    }
+    .prog-bar {
+      height:8px; background:linear-gradient(90deg,var(--primary),#8B5CF6);
+      border-radius:6px; width:0%; transition:width .4s;
+    }
+    .prog-bar.pulse {
+      animation:pulse-bar 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse-bar {
+      0%,100% { opacity:1 }
+      50% { opacity:.5 }
+    }
+    .prog-indeterminate {
+      position:absolute; top:0; left:-40%; width:40%; height:100%;
+      background:linear-gradient(90deg,transparent,rgba(91,106,240,.5),transparent);
+      animation:slide 1.2s ease-in-out infinite;
+    }
+    @keyframes slide { to { left:100% } }
+    .prog-lbl { font-size:11px; color:var(--muted) }
+
+    /* List */
+    .list-wrap { overflow-y:auto; flex:1; max-height:220px }
+    .row-item  {
+      display:flex; align-items:center; gap:8px;
+      padding:7px 12px; border-bottom:1px solid var(--border);
+      transition:background .12s;
+    }
+    .row-item:hover { background:var(--bg) }
+    .avatar { width:28px; height:28px; border-radius:50%; background:var(--border); flex-shrink:0; overflow:hidden }
+    .avatar img { width:100%; height:100% }
+    .info   { flex:1; min-width:0 }
+    .login  { font-weight:700; font-size:12px }
+    .email-txt { color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+    .src-pill  {
+      font-size:9px; font-weight:700; padding:1px 6px; border-radius:20px;
+      color:#fff; flex-shrink:0;
+    }
+    .src-pill.gh    { background:var(--gh)   }
+    .src-pill.slack { background:var(--slack) }
+    .copy-btn { opacity:0; border:none; background:none; cursor:pointer; font-size:14px; padding:2px; border-radius:4px; transition:opacity .12s }
+    .row-item:hover .copy-btn { opacity:1 }
+    .empty { padding:36px 16px; text-align:center; color:var(--muted); font-size:12px; line-height:2 }
+    .empty-icon { font-size:30px; display:block; margin-bottom:4px }
+
+    .toolbar {
+      padding:8px 10px; border-top:1.5px solid var(--border);
+      display:flex; gap:6px; background:var(--surface);
+    }
+
+    /* Send tab */
+    .send-panel { padding:10px; display:flex; flex-direction:column; gap:10px; overflow-y:auto; flex:1 }
+
+    .stat-row {
+      display:flex; gap:6px;
+    }
+    .stat-chip {
+      flex:1; background:var(--surface); border:1.5px solid var(--border);
+      border-radius:8px; padding:8px 10px; text-align:center;
+    }
+    .stat-num  { font-size:18px; font-weight:800; color:var(--primary) }
+    .stat-lbl  { font-size:10px; color:var(--muted); font-weight:600 }
+
+    .msg-card  { background:var(--surface); border:1.5px solid var(--border); border-radius:var(--radius); padding:12px; display:flex; flex-direction:column; gap:8px }
+    .msg-card textarea { resize:vertical; min-height:72px }
+
+    /* Confirm box */
+    .confirm-box {
+      background:#FFF7ED; border:1.5px solid #FDDCAB;
+      border-radius:var(--radius); padding:12px; display:none;
+      flex-direction:column; gap:8px;
+    }
+    .confirm-box.visible { display:flex }
+    .confirm-box p { font-size:12px; line-height:1.6 }
+    .confirm-box strong { color:#C2410C }
+
+    .send-footer { padding:6px 10px; border-top:1.5px solid var(--border); font-size:11px; color:var(--muted); background:var(--surface); min-height:26px }
+
+    /* Settings */
+    .settings-panel { padding:10px; display:flex; flex-direction:column; gap:8px; overflow-y:auto; flex:1 }
+    .settings-group { background:var(--surface); border:1.5px solid var(--border); border-radius:var(--radius); padding:12px; display:flex; flex-direction:column; gap:10px }
+    .settings-title { font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px }
+
+    ::-webkit-scrollbar { width:4px }
+    ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-top">
+      <div class="logo">R</div>
+      <div>
+        <div class="brand">Realman</div>
+        <div class="brand-sub">Email Collector &amp; Campaign</div>
+      </div>
+    </div>
+    <div class="tabs">
+      <div class="tab active" data-tab="collect">🔍 Collect</div>
+      <div class="tab" data-tab="send">📨 Send</div>
+      <div class="tab" data-tab="saved">💌 Saved <span id="badge"></span></div>
+      <div class="tab" data-tab="settings">⚙️</div>
+    </div>
+  </div>
+
+  <!-- ── COLLECT ── -->
+  <section id="tab-collect" class="active">
+    <div class="panel">
+
+      <!-- GitHub -->
+      <div class="card">
+        <div class="card-header">
+          <div class="src-dot gh">🐱</div>
+          <div class="card-title">GitHub</div>
+          <div class="card-hint" id="gh-mode-hint">Org name or usernames</div>
+        </div>
+
+        <!-- Mode toggle -->
+        <div class="mode-toggle" style="margin-bottom:8px">
+          <button class="mode-btn active" id="mode-org">Org / Users</button>
+          <button class="mode-btn" id="mode-search">🌐 Search All GitHub</button>
+        </div>
+
+        <!-- Org mode -->
+        <div id="input-org">
+          <input id="target" placeholder="e.g.  vercel   or   alice, bob" style="margin-bottom:8px"/>
+          <div class="hint" style="margin-bottom:8px">Only finds emails users made <strong>publicly visible</strong> on their profile.</div>
+        </div>
+
+        <!-- Search mode -->
+        <div id="input-search" style="display:none">
+          <input id="search-query" placeholder='e.g.  language:python  or  location:Korea  or  followers:>100' style="margin-bottom:4px"/>
+          <div class="hint" style="margin-bottom:8px">
+            Searches all of GitHub. Examples:<br>
+            <code>language:javascript</code> &nbsp;·&nbsp; <code>location:Seoul</code> &nbsp;·&nbsp; <code>company:google</code> &nbsp;·&nbsp; <code>followers:>50</code><br>
+            Up to 1000 results per query.
+          </div>
+        </div>
+
+        <div class="row">
+          <button class="btn btn-gh" id="start-btn">▶ Start</button>
+          <button class="btn btn-stop" id="stop-btn" style="display:none">■ Stop</button>
+          <button class="btn btn-ghost" id="clear-collect" style="margin-left:auto">🗑 Clear</button>
+        </div>
+      </div>
+
+      <!-- Slack -->
+      <div class="card">
+        <div class="card-header">
+          <div class="src-dot slack">#</div>
+          <div class="card-title">Slack</div>
+          <div class="card-hint">All workspace members</div>
+        </div>
+        <div class="row">
+          <button class="btn btn-slack" id="slack-btn">▶ Import</button>
+          <button class="btn btn-stop"  id="slack-stop-btn" style="display:none">■ Stop</button>
+          <span id="slack-status" style="font-size:11px;color:var(--muted);margin-left:4px"></span>
+        </div>
+        <div class="hint" style="margin-top:6px">Need a bot token? <a href="#" id="slack-help-link">See Settings → Slack</a></div>
+      </div>
+    </div>
+
+    <div class="prog-wrap" id="progress-wrap">
+      <div class="prog-card">
+        <div class="prog-top">
+          <div class="prog-status" id="plabel">Starting…</div>
+          <div style="text-align:right">
+            <div class="prog-count" id="prog-found">0</div>
+            <div class="prog-count-lbl">emails found</div>
+          </div>
+        </div>
+        <div class="prog-track">
+          <div class="prog-bar pulse" id="pbar"></div>
+          <div class="prog-indeterminate" id="prog-indeterminate"></div>
+        </div>
+        <div class="prog-lbl" id="prog-sub"></div>
+      </div>
+    </div>
+
+    <div class="list-wrap" id="collect-list">
+      <div class="empty"><span class="empty-icon">🔍</span>Enter a GitHub org or username and click Start.</div>
+    </div>
+  </section>
+
+  <!-- ── SEND ── -->
+  <section id="tab-send">
+    <div class="send-panel">
+
+      <!-- Stats -->
+      <div class="stat-row">
+        <div class="stat-chip"><div class="stat-num" id="stat-total">0</div><div class="stat-lbl">Collected</div></div>
+        <div class="stat-chip"><div class="stat-num" id="stat-sent" style="color:var(--green)">0</div><div class="stat-lbl">Sent</div></div>
+        <div class="stat-chip"><div class="stat-num" id="stat-left">0</div><div class="stat-lbl">Remaining</div></div>
+      </div>
+
+      <!-- Message -->
+      <div class="msg-card">
+        <div>
+          <label class="field-label">Subject</label>
+          <input id="camp-subject" placeholder="Your email subject…"/>
+        </div>
+        <div>
+          <label class="field-label">Message</label>
+          <textarea id="camp-body" rows="5" placeholder="Write your message here…"></textarea>
+        </div>
+      </div>
+
+      <!-- Send button -->
+      <button class="btn btn-primary btn-big" id="send-batch-btn">
+        📨 Open Gmail → Send to Next 3 People
+      </button>
+
+      <!-- Confirm box (appears after Gmail opens) -->
+      <div class="confirm-box" id="confirm-box">
+        <p>Gmail just opened with <strong>3 recipients</strong> pre-filled.<br>After you click Send in Gmail, come back here and confirm.</p>
+        <div class="row" style="gap:8px">
+          <button class="btn btn-green" id="confirm-sent-btn" style="flex:1">✓ Yes, I Sent It</button>
+          <button class="btn btn-ghost" id="confirm-cancel-btn" style="flex:1">✗ Cancel</button>
+        </div>
+      </div>
+
+    </div>
+    <div class="send-footer" id="send-footer">Write a message above, then click Send.</div>
+  </section>
+
+  <!-- ── SAVED ── -->
+  <section id="tab-saved">
+    <div class="list-wrap" id="saved-list">
+      <div class="empty"><span class="empty-icon">💌</span>No emails saved yet.</div>
+    </div>
+    <div class="toolbar">
+      <button class="btn btn-ghost" id="export-btn">⬇ CSV</button>
+      <button class="btn btn-ghost" id="copy-all-btn">📋 Copy All</button>
+      <button class="btn btn-red"   id="clear-all-btn" style="margin-left:auto">🗑 Clear All</button>
+    </div>
+  </section>
+
+  <!-- ── SETTINGS ── -->
+  <section id="tab-settings">
+    <div class="settings-panel">
+
+      <div class="settings-group">
+        <div class="settings-title">🐱 GitHub Token <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></div>
+        <div>
+          <input id="token-input" type="password" placeholder="ghp_…" autocomplete="off"/>
+          <div class="hint">Only needed for private orgs. <a href="https://github.com/settings/tokens/new?scopes=read:org" target="_blank">Get one here →</a></div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title"># Slack Token <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></div>
+        <div>
+          <input id="slack-token" type="password" placeholder="xoxb-…" autocomplete="off"/>
+          <div class="hint">
+            1. Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> → Create App → From manifest<br>
+            2. Paste: <code style="font-size:10px;background:#f0f2ff;padding:1px 4px;border-radius:3px">{"features":{"bot_user":{"display_name":"Realman"}},"oauth_config":{"scopes":{"bot":["users:read","users:read.email"]}}}</code><br>
+            3. Install → copy Bot Token (xoxb-…)
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">📨 How sending works</div>
+        <div class="hint" style="font-size:11px;line-height:1.8">
+          Click <strong>Send</strong> on the Send tab → Gmail opens in a new tab with your message and 3 recipients already filled in → you just click Send in Gmail → come back and confirm. <strong>No setup needed.</strong>
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="btn btn-primary" id="save-settings">💾 Save</button>
+        <span id="save-msg" style="display:none;font-size:11px;color:var(--green);font-weight:600">✓ Saved!</span>
+      </div>
+
+    </div>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+import "dotenv/config";
+import express from "express";
+import cookieParser from "cookie-parser";
+import crypto from "node:crypto";
+import { upsertMember, allMembers, deleteMember } from "./db.js";
+
+const {
+  GITHUB_CLIENT_ID,
+  GITHUB_CLIENT_SECRET,
+  OAUTH_CALLBACK_URL = "http://localhost:3000/auth/github/callback",
+  SESSION_SECRET = "dev-secret",
+  ADMIN_TOKEN,
+  PORT = 3000,
+} = process.env;
+
+if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
+  console.error("Missing GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET. Copy .env.example to .env and fill it in.");
+  process.exit(1);
+}
+
+const app = express();
+app.use(cookieParser(SESSION_SECRET));
+
+const esc = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+  );
+
+// --- Landing page: the consent point ---------------------------------------
+app.get("/", (req, res) => {
+  res.type("html").send(`<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community sign-up</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:38rem;margin:4rem auto;padding:0 1rem;line-height:1.5}
+  .btn{display:inline-block;background:#1f2328;color:#fff;padding:.7rem 1.1rem;border-radius:.5rem;text-decoration:none;font-weight:600}
+  .notice{background:#f6f8fa;border:1px solid #d0d7de;border-radius:.5rem;padding:1rem;font-size:.9rem;color:#57606a}
+</style>
+<h1>Join the community directory</h1>
+<p>Sign in with GitHub to add yourself. We'll ask GitHub for your email, and
+   <strong>you choose whether to approve it</strong>.</p>
+<p><a class="btn" href="/auth/github">Sign in with GitHub</a></p>
+<div class="notice">
+  <strong>What we store:</strong> your GitHub username, name, avatar, and the email
+  you consent to share. <strong>Why:</strong> so you appear in the member directory.
+  You can remove your data anytime from your profile page. We never sell or share it.
+</div>`);
+});
+
+// --- Step 1: redirect to GitHub with a signed anti-CSRF state ---------------
+app.get("/auth/github", (req, res) => {
+  const state = crypto.randomBytes(16).toString("hex");
+  res.cookie("oauth_state", state, {
+    httpOnly: true,
+    sameSite: "lax",
+    signed: true,
+    maxAge: 10 * 60 * 1000,
+  });
+  const url = new URL("https://github.com/login/oauth/authorize");
+  url.searchParams.set("client_id", GITHUB_CLIENT_ID);
+  url.searchParams.set("redirect_uri", OAUTH_CALLBACK_URL);
+  url.searchParams.set("scope", "read:user user:email"); // email requires explicit consent
+  url.searchParams.set("state", state);
+  url.searchParams.set("allow_signup", "true");
+  res.redirect(url.toString());
+});
+
+// --- Step 2: GitHub redirects back; exchange code, read consented data ------
+app.get("/auth/github/callback", async (req, res) => {
+  const { code, state } = req.query;
+  if (!code || !state || state !== req.signedCookies.oauth_state) {
+    return res.status(400).send("Invalid OAuth state. <a href='/'>Try again</a>.");
+  }
+  res.clearCookie("oauth_state");
+
+  try {
+    const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        client_id: GITHUB_CLIENT_ID,
+        client_secret: GITHUB_CLIENT_SECRET,
+        code,
+        redirect_uri: OAUTH_CALLBACK_URL,
+      }),
+    });
+    const token = await tokenRes.json();
+    if (!token.access_token) throw new Error("No access token: " + JSON.stringify(token));
+
+    const gh = (path) =>
+      fetch("https://api.github.com" + path, {
+        headers: {
+          Authorization: `Bearer ${token.access_token}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "realman-bot",
+        },
+      }).then((r) => r.json());
+
+    const user = await gh("/user");
+
+    // Prefer the primary verified email the user consented to share.
+    let email = user.email || null;
+    if (!email) {
+      const emails = await gh("/user/emails");
+      if (Array.isArray(emails)) {
+        const primary = emails.find((e) => e.primary && e.verified) || emails.find((e) => e.verified);
+        email = primary ? primary.email : null;
+      }
+    }
+
+    upsertMember({
+      github_id: user.id,
+      login: user.login,
+      name: user.name,
+      email,
+      avatar_url: user.avatar_url,
+    });
+
+    res.type("html").send(`<!doctype html>
+<meta charset="utf-8"><title>Thanks</title>
+<style>body{font-family:system-ui,sans-serif;max-width:38rem;margin:4rem auto;padding:0 1rem;line-height:1.5}</style>
+<h1>You're in, @${esc(user.login)} 👋</h1>
+<p>Email on file: <strong>${esc(email || "(none shared)")}</strong></p>
+<p>Changed your mind? <a href="/me/${esc(user.id)}/delete">Remove my data</a>.</p>
+<p><a href="/">Back home</a></p>`);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Sign-in failed. <a href='/'>Try again</a>.");
+  }
+});
+
+// --- Self-service data deletion (privacy requirement) -----------------------
+app.get("/me/:githubId/delete", (req, res) => {
+  const removed = deleteMember(Number(req.params.githubId));
+  res.type("html").send(
+    `<p>${removed ? "Your data has been removed." : "Nothing to remove."} <a href="/">Home</a></p>`
+  );
+});
+
+// --- Admin: view / export the opt-in list (token-protected) -----------------
+function requireAdmin(req, res, next) {
+  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
+    return res.status(403).send("Forbidden. Append ?token=YOUR_ADMIN_TOKEN");
+  }
+  next();
+}
+
+app.get("/admin/members", requireAdmin, (req, res) => {
+  res.json(allMembers());
+});
+
+app.get("/admin/members.csv", requireAdmin, (req, res) => {
+  const rows = allMembers();
+  const header = "github_id,login,name,email,consented_at";
+  const csv = [
+    header,
+    ...rows.map((r) =>
+      [r.github_id, r.login, r.name, r.email, r.consented_at]
+        .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
+        .join(",")
+    ),
+  ].join("\n");
+  res.type("text/csv").attachment("members.csv").send(csv);
+});
+
+app.listen(PORT, () => {
+  console.log(`Running on http://localhost:${PORT}`);
+  console.log(`Export list: http://localhost:${PORT}/admin/members.csv?token=YOUR_ADMIN_TOKEN`);
+});

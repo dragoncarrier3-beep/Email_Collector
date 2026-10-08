@@ -1,0 +1,20 @@
+{
+  "name": "realman-bot",
+  "version": "1.0.0",
+  "description": "Opt-in email collection via GitHub OAuth (user-consented). Members sign in with GitHub and agree to share their email.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "nodemailer": "^6.10.1"
+  }
+}

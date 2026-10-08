@@ -1,0 +1,1571 @@
+require('dotenv').config();
+const nodemailer = require('nodemailer');
+const https = require('https');
+const http  = require('http');
+const fs   = require('fs');
+const path = require('path');
+const initSqlJs = require('sql.js');
+
+// ── Config ─────────────────────────────────────────────────────────────────
+const GH_TOKEN         = process.env.GH_TOKEN         || '';
+const GMAIL_USER       = process.env.GMAIL_USER        || '';
+const GMAIL_APP_PASS   = process.env.GMAIL_APP_PASSWORD || '';
+const DAILY_LIMIT      = 50;
+const SEND_INTERVAL_MS = Math.floor(24 * 60 * 60 * 1000 / DAILY_LIMIT); // 28.8 min = 50/day
+let nextSendAt = null;
+const GH_BATCH_SIZE    = 10;             // parallel profile fetches per batch
+
+const CAMPAIGN_SUBJECT_DEFAULT = 'Working together';
+const CAMPAIGN_BODY_DEFAULT =
+`I came across your profile and wanted to reach out directly.
+
+I'm a developer focused on freelance work and I've been looking for people open to collaborating on software projects — web development, automation, and API integrations mainly.
+
+If that's something you'd consider, I'd be happy to share more details. No pitch, just genuinely curious whether there's a fit.`;
+// Live values — read from DB state so dashboard edits take effect immediately
+function getCampaignSubject() { return (db && getState('campaign_subject', '')) || CAMPAIGN_SUBJECT_DEFAULT; }
+function getCampaignBody()    { return (db && getState('campaign_body',    '')) || CAMPAIGN_BODY_DEFAULT; }
+
+// ── Storage ────────────────────────────────────────────────────────────────
+const DATA_DIR = path.join(__dirname, 'data');
+const DB_FILE  = path.join(DATA_DIR, 'realman.db');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+let db; // sql.js Database instance — initialised in main()
+
+function dbSave() {
+  fs.writeFileSync(DB_FILE, Buffer.from(db.export()));
+}
+
+function dbInit(SQL) {
+  const existing = fs.existsSync(DB_FILE) ? fs.readFileSync(DB_FILE) : null;
+  db = existing ? new SQL.Database(existing) : new SQL.Database();
+
+  db.run(`CREATE TABLE IF NOT EXISTS emails (
+    email     TEXT PRIMARY KEY,
+    login     TEXT, name TEXT, location TEXT, country TEXT,
+    company   TEXT, bio TEXT, blog TEXT, twitter TEXT,
+    followers INTEGER DEFAULT 0, repos INTEGER DEFAULT 0,
+    hireable  INTEGER DEFAULT 0, avatar TEXT, profile TEXT,
+    seen_at   TEXT
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS sent (
+    email TEXT PRIMARY KEY,
+    sent_at TEXT
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS state (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+  // Migrate: add columns if not present
+  try { db.run(`ALTER TABLE sent ADD COLUMN subject TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE sent ADD COLUMN body    TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE emails ADD COLUMN telegram TEXT DEFAULT ''`); } catch(e) {}
+  dbSave();
+}
+
+// State helpers (lastId, dailyCount, dailyDate)
+function getState(key, def) {
+  const r = db.exec(`SELECT value FROM state WHERE key='${key}'`);
+  return (r.length && r[0].values.length) ? r[0].values[0][0] : def;
+}
+function setState(key, value) {
+  db.run(`INSERT OR REPLACE INTO state(key,value) VALUES(?,?)`, [key, String(value)]);
+}
+
+// Convenience wrappers
+function dbAllEmails() {
+  const r = db.exec('SELECT * FROM emails ORDER BY seen_at DESC');
+  if (!r.length) return [];
+  const cols = r[0].columns;
+  return r[0].values.map(row => {
+    const obj = {};
+    cols.forEach((c, i) => obj[c] = row[i]);
+    obj.hireable = !!obj.hireable;
+    return obj;
+  });
+}
+function dbEmailExists(email) {
+  const r = db.exec(`SELECT 1 FROM emails WHERE email=? LIMIT 1`, [email.toLowerCase()]);
+  return r.length && r[0].values.length > 0;
+}
+function dbLoginExists(login) {
+  const r = db.exec(`SELECT 1 FROM emails WHERE login=? LIMIT 1`, [login.toLowerCase()]);
+  return r.length && r[0].values.length > 0;
+}
+function dbInsertEmail(e) {
+  db.run(`INSERT OR IGNORE INTO emails
+    (email,login,name,location,country,company,bio,blog,twitter,telegram,followers,repos,hireable,avatar,profile,seen_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [e.email.toLowerCase(), e.login, e.name, e.location, e.country,
+     e.company, e.bio, e.blog, e.twitter, e.telegram || '',
+     e.followers, e.repos, e.hireable ? 1 : 0,
+     e.avatar, e.profile, e.seen_at]);
+  dbSave();
+}
+function dbIsSent(email) {
+  const r = db.exec(`SELECT 1 FROM sent WHERE email=? LIMIT 1`, [email.toLowerCase()]);
+  return r.length && r[0].values.length > 0;
+}
+function dbMarkSent(email, subject, body) {
+  db.run(`INSERT OR IGNORE INTO sent(email,sent_at,subject,body) VALUES(?,?,?,?)`,
+    [email.toLowerCase(), new Date().toISOString(), subject||'', body||'']);
+  dbSave();
+}
+function dbSentCount() {
+  const r = db.exec('SELECT COUNT(*) FROM sent');
+  return r.length ? r[0].values[0][0] : 0;
+}
+function dbSentToday() {
+  const today = new Date().toISOString().slice(0,10);
+  const r = db.exec(`SELECT COUNT(*) FROM sent WHERE sent_at LIKE '${today}%'`);
+  return r.length ? r[0].values[0][0] : 0;
+}
+
+// Compatibility shim — keep `emails` and `state` as thin proxies for dashboard code
+let emails = [];
+let state  = { sent: [], dailyCount: 0, dailyDate: '', lastId: 0 };
+function syncState() {
+  state.lastId    = parseInt(getState('lastId', '0')) || 0;
+  state.dailyCount = dbSentToday();
+  state.dailyDate  = new Date().toDateString();
+  state.sent       = []; // no longer used — DB handles it
+  emails           = dbAllEmails();
+}
+function saveState(s) {
+  if (s.lastId !== undefined) setState('lastId', s.lastId);
+}
+
+// ── Gmail transport ────────────────────────────────────────────────────────
+const transporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // STARTTLS
+  auth: { user: GMAIL_USER, pass: GMAIL_APP_PASS }
+});
+
+// ── GitHub API ─────────────────────────────────────────────────────────────
+// Live rate-limit tracking (from response headers) so we wait exactly as
+// long as GitHub requires instead of guessing.
+const ghLimits = {
+  core:   { remaining: 5000, reset: 0 },
+  search: { remaining: 30,   reset: 0 },
+};
+
+function ghGet(apiPath) {
+  return new Promise((resolve, reject) => {
+    const opts = {
+      hostname: 'api.github.com',
+      path: apiPath,
+      headers: {
+        Authorization: `Bearer ${GH_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'Realman/1.0'
+      }
+    };
+    https.get(opts, res => {
+      const resource = res.headers['x-ratelimit-resource'] === 'search' ? 'search' : 'core';
+      const rem   = parseInt(res.headers['x-ratelimit-remaining']);
+      const reset = parseInt(res.headers['x-ratelimit-reset']);
+      if (!isNaN(rem))   ghLimits[resource].remaining = rem;
+      if (!isNaN(reset)) ghLimits[resource].reset     = reset;
+      let body = '';
+      res.on('data', d => body += d);
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try { resolve(JSON.parse(body)); } catch(e) { reject(e); }
+        } else {
+          reject(new Error(`GitHub ${res.statusCode}: ${body.slice(0,120)}`));
+        }
+      });
+    }).on('error', reject);
+  });
+}
+
+// Wait only if the given rate-limit pool is (nearly) exhausted
+async function ghWait(resource, minRemaining) {
+  const lim = ghLimits[resource];
+  if (lim.remaining > minRemaining) return;
+  const ms = Math.max(lim.reset * 1000 - Date.now(), 0) + 2000;
+  log(`GitHub ${resource} rate limit low — waiting ${Math.ceil(ms/1000)}s`);
+  await sleep(ms);
+  lim.remaining = minRemaining + 1; // assume refreshed; headers will correct it
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Best-effort country extraction from GitHub's free-form location string
+const COUNTRY_MAP = {
+  'usa':'USA','united states':'USA','us':'USA','america':'USA',
+  'uk':'UK','united kingdom':'UK','england':'UK','britain':'UK',
+  'canada':'Canada','germany':'Germany','deutschland':'Germany',
+  'france':'France','australia':'Australia','india':'India',
+  'netherlands':'Netherlands','brazil':'Brazil','spain':'Spain',
+  'italy':'Italy','russia':'Russia','china':'China','japan':'Japan',
+  'sweden':'Sweden','norway':'Norway','denmark':'Denmark',
+  'finland':'Finland','switzerland':'Switzerland','austria':'Austria',
+  'poland':'Poland','turkey':'Turkey','portugal':'Portugal',
+  'south korea':'South Korea','korea':'South Korea',
+  'new zealand':'New Zealand','singapore':'Singapore',
+  'israel':'Israel','ukraine':'Ukraine','czech':'Czech Republic',
+  'argentina':'Argentina','mexico':'Mexico','colombia':'Colombia',
+  'pakistan':'Pakistan','bangladesh':'Bangladesh','nigeria':'Nigeria',
+  'indonesia':'Indonesia','malaysia':'Malaysia','thailand':'Thailand',
+};
+function extractCountry(location) {
+  if (!location) return '';
+  const l = location.toLowerCase();
+  for (const [key, val] of Object.entries(COUNTRY_MAP)) {
+    // Match as whole word to avoid 'us' inside 'Austria', 'russia', etc.
+    const re = new RegExp(`(?:^|[\\s,])${key.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?:[\\s,]|$)`);
+    if (re.test(l)) return val;
+  }
+  return '';
+}
+
+function extractTelegram(bio, blog) {
+  const combined = bio + ' ' + blog;
+  const m = combined.match(/(?:t\.me\/|telegram[:\s]*@?|tg[:\s]*@?)([a-zA-Z][a-zA-Z0-9_]{3,31})/i);
+  if (m) return m[1];
+  const m2 = combined.match(/telegram[:\s]+([a-zA-Z][a-zA-Z0-9_]{3,31})/i);
+  if (m2) return m2[1];
+  return '';
+}
+
+// ── Collector: GitHub Search API, targeted by country/region ───────────────
+// We search `type:user location:<place>` so every profile fetch is already a
+// candidate from the selected countries. Each query is segmented by follower
+// count to work around the Search API's 1000-result cap per query
+// (each segment = up to 10 pages × 100 users).
+const COUNTRY_SEARCH = {
+  'USA': ['USA','"United States"','"New York"','California','Texas','"San Francisco"',
+    'Seattle','Chicago','Boston','Austin','"Los Angeles"','Denver','Portland',
+    'Atlanta','Florida','NYC','"Washington DC"','Colorado','Ohio','Michigan',
+    'Georgia','"North Carolina"','Virginia','Pennsylvania','Arizona','Utah',
+    'Minnesota','Oregon','Brooklyn','"San Diego"','Dallas','Houston',
+    'Philadelphia','Phoenix','"Salt Lake City"','Nashville','Pittsburgh',
+    'Detroit','Miami','Indianapolis','"Kansas City"','Baltimore','Raleigh'],
+  'UK':            ['UK','"United Kingdom"','London','England','Manchester','Scotland','Edinburgh','Bristol','Leeds'],
+  'Germany':       ['Germany','Berlin','Munich','Hamburg','Cologne','Frankfurt','Deutschland','Stuttgart'],
+  'France':        ['France','Paris','Lyon','Toulouse','Bordeaux','Nantes'],
+  'Netherlands':   ['Netherlands','Amsterdam','Rotterdam','Utrecht'],
+  'Spain':         ['Spain','Madrid','Barcelona','Valencia','Sevilla'],
+  'Italy':         ['Italy','Milan','Rome','Turin','Bologna'],
+  'Sweden':        ['Sweden','Stockholm','Gothenburg'],
+  'Norway':        ['Norway','Oslo'],
+  'Denmark':       ['Denmark','Copenhagen'],
+  'Finland':       ['Finland','Helsinki'],
+  'Switzerland':   ['Switzerland','Zurich','Geneva','Lausanne'],
+  'Austria':       ['Austria','Vienna'],
+  'Poland':        ['Poland','Warsaw','Krakow','Wroclaw','Gdansk'],
+  'Portugal':      ['Portugal','Lisbon','Porto'],
+  'Ukraine':       ['Ukraine','Kyiv','Kiev','Lviv','Kharkiv'],
+  'Czech Republic':['Czech','Prague','Brno'],
+  'Turkey':        ['Turkey','Istanbul','Ankara','Izmir'],
+  'India':         ['India','Bangalore','Bengaluru','Mumbai','Delhi','Hyderabad','Chennai','Pune','Kolkata'],
+  'China':         ['China','Beijing','Shanghai','Shenzhen','Hangzhou','Guangzhou','Chengdu'],
+  'Japan':         ['Japan','Tokyo','Osaka','Kyoto','Nagoya','Fukuoka'],
+  'South Korea':   ['Korea','Seoul','Busan'],
+  'Singapore':     ['Singapore'],
+  'Indonesia':     ['Indonesia','Jakarta','Bandung','Surabaya'],
+  'Malaysia':      ['Malaysia','"Kuala Lumpur"'],
+  'Thailand':      ['Thailand','Bangkok'],
+  'Israel':        ['Israel','"Tel Aviv"','Jerusalem','Haifa'],
+  'Pakistan':      ['Pakistan','Karachi','Lahore','Islamabad'],
+  'Bangladesh':    ['Bangladesh','Dhaka'],
+  'Canada':        ['Canada','Toronto','Vancouver','Montreal','Ottawa','Calgary','Waterloo'],
+  'Brazil':        ['Brazil','Brasil','"São Paulo"','"Sao Paulo"','"Rio de Janeiro"','"Belo Horizonte"','Curitiba'],
+  'Argentina':     ['Argentina','"Buenos Aires"','Cordoba'],
+  'Mexico':        ['Mexico','México','CDMX','Guadalajara','Monterrey'],
+  'Colombia':      ['Colombia','Bogota','Bogotá','Medellin','Medellín'],
+  'Australia':     ['Australia','Sydney','Melbourne','Brisbane','Perth'],
+  'New Zealand':   ['"New Zealand"','Auckland','Wellington'],
+  'Nigeria':       ['Nigeria','Lagos','Abuja'],
+  'Russia':        ['Russia','Moscow','"Saint Petersburg"'],
+};
+const REGIONS = {
+  'Americas': ['USA','Canada','Brazil','Argentina','Mexico','Colombia'],
+  'Europe':   ['UK','Germany','France','Netherlands','Spain','Italy','Sweden','Norway','Denmark',
+               'Finland','Switzerland','Austria','Poland','Portugal','Ukraine','Czech Republic'],
+  'Asia':     ['India','China','Japan','South Korea','Singapore','Indonesia','Malaysia',
+               'Thailand','Israel','Pakistan','Bangladesh','Turkey'],
+  'Oceania':  ['Australia','New Zealand'],
+  'Africa':   ['Nigeria'],
+};
+const FOLLOWER_BUCKETS = ['0..2','3..9','10..29','30..99','100..299','300..999','>=1000'];
+
+function getTargets() {
+  try {
+    const t = JSON.parse(getState('targets', '["USA"]'));
+    const valid = (Array.isArray(t) ? t : []).filter(c => COUNTRY_SEARCH[c]);
+    if (valid.length) return valid;
+  } catch(e) {}
+  return ['USA'];
+}
+
+// Segments: [{ q, country }] — every search query knows which country it targets
+function buildSegments(targets) {
+  const segs = [];
+  for (const country of targets)
+    for (const loc of COUNTRY_SEARCH[country])
+      for (const fb of FOLLOWER_BUCKETS)
+        segs.push({ q: `type:user location:${loc} followers:${fb}`, country });
+  return segs;
+}
+
+let collecting = false;
+let targetsVersion = 0; // bumped when targets change so the collector rebuilds
+let collectProgress = { segIdx: 0, segPage: 1, total: 1 };
+
+function saveProfile(profile, segCountry, targetSet) {
+  // Search matched one of the target location terms; extractCountry catches
+  // mixed locations like "London, UK" that slip through substring matching.
+  const country = extractCountry(profile.location || '') || segCountry;
+  if (!targetSet.has(country) || !profile.email) {
+    if (profile.login) {
+      // mark login seen so we never refetch this profile
+      db.run(`INSERT OR IGNORE INTO emails(email,login,country,seen_at) VALUES(?,?,?,?)`,
+        ['_no_email_' + profile.login, profile.login, country, new Date().toISOString()]);
+    }
+    return false;
+  }
+  if (dbEmailExists(profile.email)) return false;
+  const tg = extractTelegram(profile.bio || '', profile.blog || '');
+  dbInsertEmail({
+    login:    profile.login              || '',
+    name:     profile.name               || '',
+    email:    profile.email,
+    location: profile.location           || '',
+    country:  country,
+    company:  (profile.company||'').replace(/^@/,''),
+    bio:      profile.bio                || '',
+    blog:     profile.blog               || '',
+    twitter:  profile.twitter_username   || '',
+    telegram: tg,
+    followers:profile.followers          || 0,
+    repos:    profile.public_repos       || 0,
+    hireable: profile.hireable           || false,
+    avatar:   profile.avatar_url         || '',
+    profile:  'https://github.com/' + profile.login,
+    seen_at:  new Date().toISOString()
+  });
+  syncState();
+  log(`+ ${profile.email} (${profile.login}) [${country}] — total: ${emails.length}`);
+  return true;
+}
+
+async function collectLoop() {
+  if (collecting) return;
+  collecting = true;
+  syncState();
+  let targets  = getTargets();
+  let targetSet = new Set(targets);
+  let segments = buildSegments(targets);
+  let myVersion = targetsVersion;
+  let segIdx  = parseInt(getState('segIdx',  '0')) || 0;
+  let segPage = parseInt(getState('segPage', '1')) || 1;
+  if (segIdx >= segments.length) segIdx = 0;
+  log(`Collector started → ${targets.join(', ')}. Segment ${segIdx+1}/${segments.length}, page ${segPage}`);
+
+  while (collecting) {
+    // Targets changed from the dashboard — rebuild segments and restart scan
+    if (myVersion !== targetsVersion) {
+      targets   = getTargets();
+      targetSet = new Set(targets);
+      segments  = buildSegments(targets);
+      myVersion = targetsVersion;
+      segIdx = 0; segPage = 1;
+      log(`Targets changed → ${targets.join(', ')} — restarting scan.`);
+    }
+    collectProgress = { segIdx, segPage, total: segments.length };
+    const { q, country: segCountry } = segments[segIdx];
+    await ghWait('search', 2);
+
+    let result;
+    try {
+      result = await ghGet(`/search/users?q=${encodeURIComponent(q)}&per_page=100&page=${segPage}`);
+    } catch(e) {
+      const msg = e.message || '';
+      if (msg.includes('403') || msg.includes('429')) {
+        ghLimits.search.remaining = 0;
+        await ghWait('search', 2);
+      } else if (msg.includes('422')) {
+        // past the 1000-result cap — move to next segment
+        segIdx++; segPage = 1;
+      } else {
+        log('GitHub search error — waiting 10s:', msg);
+        await sleep(10000);
+      }
+      continue;
+    }
+
+    const items = Array.isArray(result.items) ? result.items : [];
+    const fresh = items.filter(u => u.login && !dbLoginExists(u.login));
+
+    for (let i = 0; i < fresh.length && collecting; i += GH_BATCH_SIZE) {
+      await ghWait('core', 20);
+      const batch = fresh.slice(i, i + GH_BATCH_SIZE);
+      const profiles = await Promise.all(
+        batch.map(u => ghGet(`/users/${u.login}`).catch(() => null))
+      );
+      for (const p of profiles) if (p) saveProfile(p, segCountry, targetSet);
+      await sleep(300);
+    }
+
+    if (items.length < 100 || segPage >= 10) {
+      segIdx = (segIdx + 1) % segments.length;
+      segPage = 1;
+      if (segIdx === 0) log('All search segments scanned — restarting from the first.');
+    } else {
+      segPage++;
+    }
+    setState('segIdx', segIdx);
+    setState('segPage', segPage);
+    dbSave();
+
+    await sleep(2100); // search API: 30 requests/min
+  }
+  collecting = false;
+}
+
+// ── Campaign: sends 50 emails/day (1 every 28.8 min) ─────────────────────
+let sendingNow  = null; // { email, name } while SMTP in flight
+let lastSent    = null; // { email, name, at } of most recent successful send
+async function campaignTick() {
+  // Enforce daily cap
+  const todayCount = dbSentToday();
+  if (todayCount >= DAILY_LIMIT) {
+    log('Daily limit reached (' + DAILY_LIMIT + ' sent today) — resuming tomorrow.');
+    return;
+  }
+
+  // Get next unsent US email from DB
+  const r2 = db.exec(
+    `SELECT * FROM emails
+     WHERE email NOT LIKE '_no_email_%'
+       AND email NOT IN (SELECT email FROM sent)
+     ORDER BY seen_at ASC LIMIT 1`
+  );
+  if (!r2.length || !r2[0].values.length) {
+    log('No unsent emails — waiting for collector to find more…');
+    return;
+  }
+  const cols = r2[0].columns;
+  const row  = r2[0].values[0];
+  const r    = {};
+  cols.forEach((c, i) => r[c] = row[i]);
+
+  const today    = dbSentToday();
+  const total    = dbSentCount();
+  const subject  = getCampaignSubject();
+  const greeting = r.name ? 'Hi ' + r.name.split(' ')[0] + ',\n\n' : '';
+  const body     = greeting + getCampaignBody();
+
+  sendingNow = { email: r.email, name: r.name || r.login || r.email };
+  try {
+    await transporter.sendMail({
+      from:    '"Realman" <' + GMAIL_USER + '>',
+      to:      r.email,
+      subject: subject,
+      text:    body
+    });
+    dbMarkSent(r.email, subject, body);
+    lastSent   = { email: r.email, name: r.name || r.login || r.email, at: new Date().toISOString() };
+    sendingNow = null;
+    log('✓ Sent to ' + r.email + ' (' + (r.name || r.login) + ') — today: ' + (today+1) + ', total: ' + (total+1));
+  } catch(e) {
+    sendingNow = null;
+    const isNetworkBlock = e.message.includes('ETIMEDOUT') || e.message.includes('ECONNREFUSED');
+    if (isNetworkBlock) {
+      log('✗ SMTP blocked (' + e.message + ') — will retry next tick');
+    } else {
+      dbMarkSent(r.email, subject, body); // bad address — skip permanently
+      log('✗ Failed ' + r.email + ': ' + e.message);
+    }
+  }
+}
+
+// ── Logger ─────────────────────────────────────────────────────────────────
+const logBuffer = [];
+function log(...args) {
+  const ts  = new Date().toISOString().replace('T',' ').slice(0,19);
+  const line = `[${ts}] ${args.join(' ')}`;
+  console.log(line);
+  logBuffer.unshift(line);
+  if (logBuffer.length > 200) logBuffer.pop();
+}
+
+// ── Dashboard (http://localhost:3000) ──────────────────────────────────────
+function realEmails() {
+  return emails.filter(e => !e.email.startsWith('_no_email_'));
+}
+
+function dashboardHTML() {
+  syncState();
+  const real = realEmails();
+  const totalSent = dbSentCount();
+  const daily     = dbSentToday();
+  const r = db.exec(
+    `SELECT COUNT(*) FROM emails WHERE email NOT LIKE '_no_email_%' AND email NOT IN (SELECT email FROM sent)`
+  );
+  const unsent   = r.length ? r[0].values[0][0] : 0;
+  const nextSend  = nextSendAt ? new Date(nextSendAt).toLocaleTimeString() : '—';
+  const logLines  = logBuffer.slice(0, 80);
+  const nowStr    = new Date().toLocaleString();
+
+  const logHTML = logLines.map(l => {
+    const cls = l.includes('✓') ? 'ok' : l.includes('✗') || l.includes('⚠') ? 'err' : '';
+    return `<div class="log-line ${cls}">${l.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Realman</title>
+<script>
+  // Apply saved theme BEFORE paint — no flash
+  (function(){ document.documentElement.setAttribute('data-theme', localStorage.getItem('rm-theme')||'light'); })();
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+
+  /* ══ WHITE is the default ══ */
+  body{font-family:'Inter',sans-serif;background:#fff;color:#111;font-size:14px;line-height:1.55;min-height:100vh}
+  header{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);border-bottom:1.5px solid #e8e8e8;padding:0 32px;height:60px;display:flex;align-items:center;justify-content:space-between}
+  .logo-icon{width:34px;height:34px;border-radius:9px;background:#111;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:900;color:#fff}
+  .logo{display:flex;align-items:center;gap:10px}
+  .logo-name{font-size:1rem;font-weight:800;color:#111}
+  .logo-sub{font-size:.7rem;color:#888}
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:99px;font-size:.75rem;font-weight:600;border:1px solid #e0e0e0;color:#888}
+  .badge.on{border-color:#22c55e;color:#16a34a}
+  .badges{display:flex;gap:8px}
+  .pulse{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 1.8s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  main{max-width:1300px;margin:0 auto;padding:32px 32px 60px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-bottom:32px}
+  .stat{background:#fff;border:1.5px solid #e8e8e8;border-radius:14px;padding:20px 18px}
+  .stat.gold{border-color:#f5a623;background:#fffbf0}
+  .stat-val{font-size:2.4rem;font-weight:900;line-height:1;margin-bottom:4px;letter-spacing:-.03em;color:#111}
+  .stat.gold .stat-val{color:#d97706}
+  .stat-lbl{font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#999}
+  .ctrl-btn{padding:10px 24px;border-radius:9px;border:none;font-size:.88rem;font-weight:700;cursor:pointer;transition:opacity .15s}
+  .ctrl-btn:hover{opacity:.82}
+  .ctrl-btn:disabled{opacity:.35;cursor:default}
+  .ctrl-btn.green{background:#22c55e;color:#fff}
+  .ctrl-btn.blue{background:#3b82f6;color:#fff}
+  .ctrl-btn.red{background:#ef4444;color:#fff}
+  .panel{background:#fff;border:1.5px solid #e8e8e8;border-radius:14px;padding:20px}
+  .sec-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .sec-title{font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#999}
+  table{width:100%;border-collapse:collapse;font-size:.78rem}
+  table{width:100%;table-layout:fixed;border-collapse:collapse}
+  th{padding:7px 8px;text-align:left;font-size:.65rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#aaa;white-space:nowrap;border-bottom:1.5px solid #e8e8e8}
+  td{padding:7px 8px;border-bottom:1px solid #f0f0f0;color:#222;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  tr:last-child td{border:none}
+  tr:hover td{background:#fafafa}
+  #filter-row td{padding:3px 5px;background:#f8f8f8;border-bottom:1.5px solid #e8e8e8}
+  .av{width:28px;height:28px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px;background:#eee}
+  .av-ph{width:28px;height:28px;border-radius:50%;background:#e0e0e0;display:inline-flex;align-items:center;justify-content:center;font-size:.65rem;color:#888;vertical-align:middle;margin-right:6px}
+  .col-filter-styled{width:100%;background:#fff;border:1px solid #ddd;color:#111;border-radius:5px;padding:3px 7px;font-size:.72rem;outline:none}
+  .log-wrap{background:#fff;border:1.5px solid #e8e8e8;border-radius:14px;overflow:hidden}
+  .log-scroll{max-height:360px;overflow-y:auto;padding:16px 20px}
+  .log-line{font-family:'Courier New',monospace;font-size:.76rem;line-height:1.9;white-space:pre-wrap;word-break:break-all;color:#666;border-bottom:1px solid #f5f5f5;padding-bottom:1px}
+  .log-line:last-child{border:none}
+  .log-line.ok{color:#16a34a}
+  .log-line.err{color:#dc2626}
+  .btn-action{background:#111;color:#fff;border:none;border-radius:7px;padding:6px 16px;font-size:.78rem;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}
+  .btn-action:hover{opacity:.85}
+  .btn-upload{background:#fff;border:1.5px solid #ddd;color:#111;border-radius:7px;padding:6px 16px;font-size:.78rem;font-weight:600;cursor:pointer}
+  code{background:#f0f0f0;padding:1px 5px;border-radius:4px;font-size:.76rem}
+  footer{text-align:center;padding:28px 0;font-size:.75rem;color:#bbb}
+  footer a{color:#111;font-weight:600;text-decoration:none}
+
+  /* ══ DARK mode overrides ══ */
+  [data-theme="dark"] body{background:#0d0d0d;color:#f0f0f0}
+  [data-theme="dark"] header{background:rgba(13,13,13,.94);border-color:#2a2a2a}
+  [data-theme="dark"] .logo-icon{background:#f5a623;color:#000}
+  [data-theme="dark"] .logo-name{color:#f0f0f0}
+  [data-theme="dark"] .logo-sub{color:#666}
+  [data-theme="dark"] .badge{border-color:#333;color:#666}
+  [data-theme="dark"] .badge.on{border-color:#22c55e;color:#22c55e}
+  [data-theme="dark"] .stat{background:#181818;border-color:#2a2a2a}
+  [data-theme="dark"] .stat.gold{background:rgba(245,166,35,.07);border-color:rgba(245,166,35,.4)}
+  [data-theme="dark"] .stat-val{color:#f0f0f0}
+  [data-theme="dark"] .stat.gold .stat-val{color:#f5a623}
+  [data-theme="dark"] .stat-lbl{color:#555}
+  [data-theme="dark"] .panel{background:#181818;border-color:#2a2a2a}
+  [data-theme="dark"] .sec-title{color:#555}
+  [data-theme="dark"] th{color:#555;border-color:#2a2a2a}
+  [data-theme="dark"] td{color:#ccc;border-color:#1e1e1e}
+  [data-theme="dark"] tr:hover td{background:#1a1a1a}
+  [data-theme="dark"] #filter-row td{background:#111;border-color:#2a2a2a}
+  [data-theme="dark"] .av-ph{background:#333;color:#888}
+  [data-theme="dark"] .col-filter-styled{background:#1e1e1e;border-color:#333;color:#eee}
+  [data-theme="dark"] .log-wrap{background:#181818;border-color:#2a2a2a}
+  [data-theme="dark"] .log-line{color:#666;border-color:#1e1e1e}
+  [data-theme="dark"] .log-line.ok{color:#22c55e}
+  [data-theme="dark"] .log-line.err{color:#ef4444}
+  [data-theme="dark"] .btn-action{background:#f0f0f0;color:#000}
+  [data-theme="dark"] .btn-upload{background:#1e1e1e;border-color:#333;color:#eee}
+  [data-theme="dark"] code{background:#222;color:#ccc}
+  [data-theme="dark"] footer{color:#444}
+  [data-theme="dark"] footer a{color:#ccc}
+  [data-theme="dark"] #theme-toggle{background:#1e1e1e;border-color:#333;color:#eee}
+  [data-theme="dark"] #tab-collected,[data-theme="dark"] #tab-sent{color:#555}
+  [data-theme="dark"] #panel-sent .sf-input{background:#1e1e1e;border-color:#333;color:#eee}
+  [data-theme="dark"] #panel-sent>div:first-child{background:#111;border-color:#2a2a2a}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <div class="logo-icon">R</div>
+    <div>
+      <div class="logo-name">Realman</div>
+      <div class="logo-sub">Email Collector &amp; Campaign</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <!-- Theme toggle -->
+    <button id="theme-toggle" style="
+      background:#fff;border:1.5px solid #ddd;color:#111;
+      border-radius:99px;padding:6px 16px;font-size:.8rem;font-weight:600;
+      cursor:pointer;display:flex;align-items:center;gap:7px;transition:border-color .15s
+    ">
+      <span id="theme-icon">🌙</span><span id="theme-label">Dark</span>
+    </button>
+    <div class="badges">
+      <span class="badge ${collecting?'on':'off'}">
+        <span class="pulse"></span>${collecting?'Collecting':'Idle'}
+      </span>
+      <span class="badge ${campaignRunning?'on':'off'}">
+        <span class="pulse"></span>${campaignRunning?'Campaign On':'Campaign Off'}
+      </span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="stats">
+    <div class="stat gold">
+      <div class="stat-val">${real.length.toLocaleString()}</div>
+      <div class="stat-lbl">Collected</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val">${totalSent.toLocaleString()}</div>
+      <div class="stat-lbl">All-time Sent</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val">${daily}</div>
+      <div class="stat-lbl">Sent Today</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val">${unsent.toLocaleString()}</div>
+      <div class="stat-lbl">Unsent</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val">50<span style="font-size:1.2rem;font-weight:600;color:#999">/day</span></div>
+      <div class="stat-lbl">Send Rate</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val" style="font-size:1.5rem">${nextSend}</div>
+      <div class="stat-lbl">Next Send</div>
+    </div>
+  </div>
+
+  <!-- Control buttons -->
+  <div style="display:flex;gap:14px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+    <button id="btn-collect" class="ctrl-btn green" onclick="ctrlAction('collect-start')">
+      ▶ Get Emails
+    </button>
+    <button id="btn-send" class="ctrl-btn blue" onclick="ctrlAction('campaign-start')">
+      ✉ Send Emails
+    </button>
+    <button id="btn-stop" class="ctrl-btn red" onclick="ctrlAction('stop-all')">
+      ■ Stop All
+    </button>
+  </div>
+  <!-- Status row -->
+  <div style="display:flex;gap:20px;margin-bottom:32px;flex-wrap:wrap;align-items:center">
+    <div id="status-collect" style="display:flex;align-items:center;gap:8px;font-size:.84rem;font-weight:600;color:#999">
+      <span id="dot-collect" style="width:9px;height:9px;border-radius:50%;background:#ddd;display:inline-block"></span>
+      <span id="label-collect">Collector: Idle</span>
+    </div>
+    <div id="status-send" style="display:flex;align-items:center;gap:8px;font-size:.84rem;font-weight:600;color:#999">
+      <span id="dot-send" style="width:9px;height:9px;border-radius:50%;background:#ddd;display:inline-block"></span>
+      <span id="label-send">Campaign: Off</span>
+    </div>
+    <span id="ctrl-msg" style="font-size:.84rem;color:#999"></span>
+    <span id="sending-banner" style="display:none;font-size:.84rem;font-weight:700;color:#d97706;animation:pulse 1s infinite">⟳ Sending…</span>
+  </div>
+
+  <!-- Collector progress bar -->
+  <div id="collect-progress" style="display:none;margin:-16px 0 32px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+      <span style="font-size:.78rem;font-weight:700;color:#16a34a">⟳ Scanning GitHub for US emails…</span>
+      <span id="cp-label" style="font-size:.76rem;color:#999;font-weight:600"></span>
+    </div>
+    <div style="height:8px;background:#eee;border-radius:99px;overflow:hidden">
+      <div id="cp-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#16a34a);border-radius:99px;transition:width .6s ease"></div>
+    </div>
+    <div id="cp-detail" style="font-size:.73rem;color:#aaa;margin-top:5px;font-weight:500"></div>
+  </div>
+
+  <!-- Toast notification -->
+  <div id="send-toast" style="position:fixed;bottom:28px;right:28px;background:#16a34a;color:#fff;padding:12px 20px;border-radius:10px;font-size:.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.18);opacity:0;transform:translateY(20px);transition:opacity .3s,transform .3s;pointer-events:none;z-index:9999"></div>
+
+  <!-- CSV Import -->
+  <div class="sec-hdr" style="margin-bottom:14px">
+    <span class="sec-title">Import CSV</span>
+  </div>
+  <div class="panel" style="margin-bottom:40px">
+    <p style="color:#888;font-size:.85rem;margin-bottom:14px">
+      Upload a CSV file with an <code>email</code> column (and optionally <code>name</code>, <code>login</code>, <code>location</code>).
+      Duplicates are skipped automatically.
+    </p>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <label class="btn-upload" for="csv-file">Choose CSV file</label>
+      <input type="file" id="csv-file" accept=".csv,text/csv" style="display:none">
+      <span id="csv-name" style="color:#888;font-size:.85rem">No file chosen</span>
+      <button class="btn-action" id="csv-import-btn" disabled>Import</button>
+      <span id="csv-msg" style="font-size:.85rem"></span>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0;border-bottom:2px solid #e8e8e8">
+    <div style="display:flex;gap:0">
+      <button id="tab-collected" onclick="switchTab('collected')" style="background:none;border:none;border-bottom:2px solid #111;margin-bottom:-2px;padding:10px 20px;font-size:.85rem;font-weight:700;color:#111;cursor:pointer">
+        Collected Emails <span id="visible-count" style="color:#999;font-weight:400;font-size:.78rem">(${real.length.toLocaleString()})</span>
+      </button>
+      <button id="tab-sent" onclick="switchTab('sent')" style="background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;padding:10px 20px;font-size:.85rem;font-weight:600;color:#aaa;cursor:pointer">
+        Sent History <span id="sent-count" style="font-weight:400;font-size:.78rem"></span>
+      </button>
+    </div>
+    <a href="/export.csv" class="btn-action" style="text-decoration:none;font-size:.8rem;padding:6px 16px;margin-bottom:6px">⬇ Export CSV</a>
+  </div>
+
+  <!-- Collected panel -->
+  <div id="panel-collected" class="panel" style="padding:0;overflow:hidden;margin-bottom:40px">
+    <div>
+      <table id="email-table">
+        <colgroup>
+          <col style="width:18%"><!-- user -->
+          <col style="width:14%"><!-- name -->
+          <col style="width:20%"><!-- email -->
+          <col style="width:16%"><!-- location -->
+          <col style="width:14%"><!-- company -->
+          <col style="width:6%"> <!-- followers -->
+          <col style="width:5%"> <!-- repos -->
+          <col style="width:4%"> <!-- hireable -->
+          <col style="width:3%"> <!-- sent -->
+          <col style="width:7%"> <!-- date -->
+        </colgroup>
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Location</th>
+            <th>Company</th>
+            <th>Followers</th>
+            <th>Repos</th>
+            <th>Hire</th>
+            <th>Sent</th>
+            <th>Date</th>
+          </tr>
+          <tr id="filter-row">
+            <td><input class="col-filter" data-col="0" placeholder="login…"></td>
+            <td><input class="col-filter" data-col="1" placeholder="name…"></td>
+            <td><input class="col-filter" data-col="2" placeholder="email…"></td>
+            <td><input class="col-filter" data-col="3" placeholder="location…"></td>
+            <td><input class="col-filter" data-col="4" placeholder="company…"></td>
+            <td><input class="col-filter" data-col="5" placeholder="min…"></td>
+            <td></td>
+            <td>
+              <select class="col-filter" data-col="7">
+                <option value="">all</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+              </select>
+            </td>
+            <td>
+              <select class="col-filter" data-col="8">
+                <option value="">all</option>
+                <option value="sent">sent</option>
+                <option value="–">unsent</option>
+              </select>
+            </td>
+            <td></td>
+          </tr>
+        </thead>
+        <tbody id="email-tbody">
+          <tr><td colspan="10" style="text-align:center;color:#aaa;padding:20px">Loading…</td></tr>
+        </tbody>
+      </table>
+      <div id="table-footer" style="padding:10px 16px;font-size:.78rem;color:#999"></div>
+    </div>
+  </div>
+
+  <!-- Sent History panel -->
+  <div id="panel-sent" class="panel" style="padding:0;overflow:hidden;margin-bottom:40px;display:none">
+    <div style="padding:10px 16px;background:#f8f8f8;border-bottom:1px solid #eee;display:flex;gap:10px;flex-wrap:wrap">
+      <input id="sf-email"    placeholder="email…"    style="border:1px solid #ddd;border-radius:6px;padding:5px 10px;font-size:.78rem;outline:none;flex:1">
+      <input id="sf-name"     placeholder="name…"     style="border:1px solid #ddd;border-radius:6px;padding:5px 10px;font-size:.78rem;outline:none;flex:1">
+      <input id="sf-country"  placeholder="country…"  style="border:1px solid #ddd;border-radius:6px;padding:5px 10px;font-size:.78rem;outline:none;flex:1">
+      <input id="sf-location" placeholder="location…" style="border:1px solid #ddd;border-radius:6px;padding:5px 10px;font-size:.78rem;outline:none;flex:1">
+    </div>
+    <table style="width:100%;table-layout:fixed;border-collapse:collapse">
+      <colgroup>
+        <col style="width:16%"><!-- user -->
+        <col style="width:12%"><!-- name -->
+        <col style="width:18%"><!-- email -->
+        <col style="width:9%"> <!-- country -->
+        <col style="width:13%"><!-- subject -->
+        <col style="width:20%"><!-- body preview -->
+        <col style="width:12%"><!-- sent at -->
+      </colgroup>
+      <thead>
+        <tr>
+          <th>User</th><th>Name</th><th>Email</th><th>Country</th><th>Subject</th><th>Message Preview</th><th>Sent At</th>
+        </tr>
+      </thead>
+      <tbody id="sent-tbody">
+        <tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px">Loading…</td></tr>
+      </tbody>
+    </table>
+    <div id="sent-footer" style="padding:10px 16px;font-size:.78rem;color:#999"></div>
+  </div>
+
+  <!-- Email Template Editor -->
+  <div class="sec-hdr" style="margin-top:32px;margin-bottom:14px">
+    <span class="sec-title">Email Template</span>
+  </div>
+  <div class="panel" id="template-panel" style="margin-bottom:40px">
+    <div style="margin-bottom:12px">
+      <label style="font-size:.78rem;font-weight:700;color:#888;display:block;margin-bottom:4px">SUBJECT</label>
+      <input id="tpl-subject" style="width:100%;border:1px solid #ddd;border-radius:6px;padding:8px 12px;font-size:.88rem;outline:none" value="">
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:.78rem;font-weight:700;color:#888;display:block;margin-bottom:4px">BODY <span style="font-weight:400;color:#bbb">(use {name} for personalization)</span></label>
+      <textarea id="tpl-body" rows="9" style="width:100%;border:1px solid #ddd;border-radius:6px;padding:8px 12px;font-size:.84rem;font-family:inherit;outline:none;resize:vertical;line-height:1.6"></textarea>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center">
+      <button onclick="saveTemplate()" class="ctrl-btn blue" style="font-size:.82rem;padding:7px 18px">Save Template</button>
+      <span id="tpl-msg" style="font-size:.82rem;color:#999"></span>
+    </div>
+    <div style="margin-top:14px;padding:12px 14px;background:#f8f8f8;border-radius:6px;border:1px solid #eee">
+      <div style="font-size:.72rem;font-weight:700;color:#aaa;letter-spacing:.07em;text-transform:uppercase;margin-bottom:6px">Preview (with sample name)</div>
+      <div id="tpl-preview" style="font-size:.82rem;color:#444;white-space:pre-wrap;font-family:inherit;line-height:1.6"></div>
+    </div>
+  </div>
+
+  <!-- Live Log -->
+  <div class="sec-hdr">
+    <span class="sec-title">Live Log</span>
+    <span class="sec-time" style="color:#aaa;font-size:.75rem">Updated ${nowStr} · auto-refreshes every 10s · <a href="/" style="color:#888">refresh</a></span>
+  </div>
+  <div class="log-wrap">
+    <div class="log-scroll">
+      ${logHTML || '<div class="log-line" style="color:#bbb">Waiting for activity…</div>'}
+    </div>
+  </div>
+</main>
+
+<footer>
+  Realman &nbsp;·&nbsp; <a href="/">Refresh</a>
+</footer>
+<script>
+// ── Control buttons ───────────────────────────────────────────────────────
+function setStatusDot(id, active, label) {
+  const dot = document.getElementById('dot-' + id);
+  const lbl = document.getElementById('label-' + id);
+  if (!dot || !lbl) return;
+  if (active) {
+    dot.style.background = id === 'collect' ? '#22c55e' : '#3b82f6';
+    dot.style.animation  = 'pulse 1.4s ease-in-out infinite';
+    lbl.style.color = '#111';
+  } else {
+    dot.style.background = '#ddd';
+    dot.style.animation  = 'none';
+    lbl.style.color = '#999';
+  }
+  lbl.textContent = label;
+}
+
+var _lastSentEmail = null;
+var _pollTimer = null;
+function schedulePoll(ms) {
+  clearTimeout(_pollTimer);
+  _pollTimer = setTimeout(pollStatus, ms);
+}
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+    setStatusDot('collect', d.collecting,
+      d.collecting ? '⟳ Collecting…' : 'Collector: Idle');
+
+    // Sending-now banner
+    var sendBanner = document.getElementById('sending-banner');
+    if (d.sendingNow) {
+      setStatusDot('send', true, '⟳ Sending to ' + d.sendingNow.email + '…');
+      if (sendBanner) { sendBanner.style.display=''; sendBanner.textContent = '⟳ Sending to ' + d.sendingNow.email + '…'; }
+    } else {
+      setStatusDot('send', d.campaignRunning, d.campaignRunning ? '⟳ Campaign Running' : 'Campaign: Off');
+      if (sendBanner) sendBanner.style.display='none';
+    }
+
+    // Toast when a new email was just sent
+    if (d.lastSent && d.lastSent.email !== _lastSentEmail) {
+      _lastSentEmail = d.lastSent.email;
+      showToast('✓ Sent to ' + d.lastSent.email);
+      if (currentTab === 'sent') fetchSent();
+    }
+
+    // Collector progress bar
+    var cpWrap = document.getElementById('collect-progress');
+    if (cpWrap) {
+      if (d.collecting && d.collectProgress) {
+        var cp = d.collectProgress;
+        cpWrap.style.display = '';
+        document.getElementById('cp-fill').style.width = cp.pct.toFixed(2) + '%';
+        document.getElementById('cp-label').textContent = cp.pct.toFixed(1) + '% of scan';
+        document.getElementById('cp-detail').textContent =
+          'Search segment ' + (cp.seg + 1) + ' of ' + cp.total
+          + ' · page ' + cp.page + '/10 · ' + d.collected.toLocaleString() + ' emails collected';
+      } else {
+        cpWrap.style.display = 'none';
+      }
+    }
+
+    const btnC = document.getElementById('btn-collect');
+    const btnS = document.getElementById('btn-send');
+    if (btnC) btnC.textContent = d.collecting  ? '⟳ Collecting…' : '▶ Get Emails';
+    if (btnS) btnS.textContent = d.sendingNow ? '⟳ Sending…' : (d.campaignRunning ? '⟳ Campaign On' : '✉ Send Emails');
+    if (currentTab === 'collected') fetchEmails();
+    else fetchSent();
+    schedulePoll((campaignActiveHint || d.collecting) ? 3000 : 10000);
+    return;
+  } catch(e) {}
+  schedulePoll(campaignActiveHint ? 3000 : 10000);
+}
+var campaignActiveHint = false;
+function showToast(msg) {
+  var t = document.getElementById('send-toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.style.opacity = '1';
+  t.style.transform = 'translateY(0)';
+  setTimeout(function(){ t.style.opacity='0'; t.style.transform='translateY(20px)'; }, 4000);
+}
+schedulePoll(3000);
+pollStatus();
+
+async function ctrlAction(action) {
+  const msg = document.getElementById('ctrl-msg');
+  document.querySelectorAll('.ctrl-btn').forEach(b => b.disabled = true);
+  msg.style.color = '#999';
+  msg.textContent = '…';
+  try {
+    const res  = await fetch('/ctrl/' + action, { method: 'POST' });
+    const data = await res.json();
+    msg.style.color = data.ok ? '#16a34a' : '#dc2626';
+    msg.textContent = data.msg || (data.ok ? 'Done.' : 'Error');
+    if (action === 'campaign-start') { campaignActiveHint = true; schedulePoll(2000); }
+    if (action === 'stop-all') { campaignActiveHint = false; }
+    pollStatus();
+  } catch(e) {
+    msg.style.color = '#dc2626';
+    msg.textContent = 'Request failed: ' + e.message;
+  }
+  document.querySelectorAll('.ctrl-btn').forEach(b => b.disabled = false);
+}
+
+// ── Theme toggle ──────────────────────────────────────────────────────────
+(function(){
+  function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    localStorage.setItem('rm-theme', t);
+    document.getElementById('theme-icon').textContent  = t==='dark' ? '☀️' : '🌙';
+    document.getElementById('theme-label').textContent = t==='dark' ? 'Light' : 'Dark';
+    const btn = document.getElementById('theme-toggle');
+    if (btn) { btn.style.background = t==='dark'?'#1e1e1e':'#fff'; btn.style.borderColor = t==='dark'?'#333':'#ddd'; btn.style.color = t==='dark'?'#eee':'#111'; }
+  }
+  const current = localStorage.getItem('rm-theme') || 'light';
+  applyTheme(current);
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+  });
+})();
+
+// ── Tab switching ─────────────────────────────────────────────────────────
+let currentTab = 'collected';
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('panel-collected').style.display = tab==='collected' ? '' : 'none';
+  document.getElementById('panel-sent').style.display      = tab==='sent'      ? '' : 'none';
+  const tc = document.getElementById('tab-collected');
+  const ts = document.getElementById('tab-sent');
+  tc.style.borderBottomColor = tab==='collected' ? '#111' : 'transparent';
+  tc.style.color             = tab==='collected' ? '#111' : '#aaa';
+  ts.style.borderBottomColor = tab==='sent'      ? '#111' : 'transparent';
+  ts.style.color             = tab==='sent'      ? '#111' : '#aaa';
+  if (tab === 'sent') fetchSent();
+}
+
+// ── DB-driven search & table render ──────────────────────────────────────
+const tbody    = document.getElementById('email-tbody');
+const footer   = document.getElementById('table-footer');
+const vcnt     = document.getElementById('visible-count');
+let fetchTimer = null;
+
+function buildRow(e) {
+  const av = e.avatar
+    ? '<img class="av" src="' + e.avatar + '&s=56" alt="" loading="lazy">'
+    : '<span class="av-ph">' + (e.login||'?').slice(0,1).toUpperCase() + '</span>';
+  const userCell = av + (e.login
+    ? '<a href="' + (e.profile||'') + '" target="_blank" style="color:#555;font-size:.78rem">@' + e.login + '</a>'
+    : '&mdash;');
+  const sent = e.is_sent;
+  return '<tr>'
+    + '<td>' + userCell + '</td>'
+    + '<td style="font-size:.8rem">' + (e.name||'&mdash;') + '</td>'
+    + '<td><a href="mailto:' + (e.email||'') + '" style="color:#d97706;font-size:.78rem">' + (e.email||'') + '</a></td>'
+    + '<td style="font-size:.78rem;color:#666" title="' + (e.location||'') + '">' + (e.location||'&mdash;') + '</td>'
+    + '<td style="font-size:.78rem;color:#666" title="' + (e.company||'') + '">' + (e.company||'&mdash;') + '</td>'
+    + '<td style="font-size:.78rem;text-align:center">' + (e.followers||0).toLocaleString() + '</td>'
+    + '<td style="font-size:.78rem;text-align:center">' + (e.repos||0) + '</td>'
+    + '<td style="text-align:center">' + (e.hireable ? '<span style="color:#16a34a;font-size:.75rem">yes</span>' : '&mdash;') + '</td>'
+    + '<td style="text-align:center;color:' + (sent?'#16a34a':'#ccc') + '">' + (sent?'&#10003;':'&ndash;') + '</td>'
+    + '<td style="font-size:.72rem;color:#aaa">' + (e.seen_at||'').slice(0,10) + '</td>'
+    + '</tr>';
+}
+
+async function fetchEmails() {
+  const params = new URLSearchParams();
+  document.querySelectorAll('.col-filter').forEach(el => {
+    const v = el.value.trim();
+    if (!v) return;
+    const col = el.dataset.col;
+    if (col === '0') params.set('login', v);
+    else if (col === '1') params.set('name', v);
+    else if (col === '2') params.set('email', v);
+    else if (col === '3') params.set('location', v);
+    else if (col === '4') params.set('company', v);
+    else if (col === '5') params.set('minFollowers', v);
+    else if (col === '7') params.set('hireable', v);
+    else if (col === '8') params.set('sent', el.value);
+  });
+  try {
+    const res  = await fetch('/api/emails?' + params.toString());
+    const data = await res.json();
+    tbody.innerHTML = data.rows.length
+      ? data.rows.map(buildRow).join('')
+      : '<tr><td colspan="10" style="text-align:center;color:#aaa;padding:20px">No results</td></tr>';
+    vcnt.textContent = '(' + data.rows.length.toLocaleString()
+      + (data.total > data.rows.length ? ' of ' + data.total.toLocaleString() : '') + ')';
+    footer.textContent = data.total > 500
+      ? 'Showing 500 of ' + data.total.toLocaleString() + ' — use filters to narrow, or Export CSV for full list'
+      : '';
+  } catch(err) { tbody.innerHTML = '<tr><td colspan="10" style="color:#ef4444;padding:16px">Error: ' + err.message + '</td></tr>'; }
+}
+
+document.querySelectorAll('.col-filter').forEach(el => {
+  el.className += ' col-filter-styled';
+  el.style.cssText = 'width:100%;border-radius:6px;padding:4px 8px;font-size:.75rem;outline:none';
+  el.addEventListener('input', () => {
+    clearTimeout(fetchTimer);
+    fetchTimer = setTimeout(fetchEmails, 350);
+  });
+});
+fetchEmails();
+
+// ── Sent history ──────────────────────────────────────────────────────────
+let sentTimer = null;
+async function fetchSent() {
+  const stbody = document.getElementById('sent-tbody');
+  const sfoot  = document.getElementById('sent-footer');
+  const scnt   = document.getElementById('sent-count');
+  const params = new URLSearchParams();
+  const vEmail = document.getElementById('sf-email');
+  const vName  = document.getElementById('sf-name');
+  const vCnt   = document.getElementById('sf-country');
+  const vLoc   = document.getElementById('sf-location');
+  if (vEmail && vEmail.value.trim())    params.set('email',    vEmail.value.trim());
+  if (vName  && vName.value.trim())     params.set('name',     vName.value.trim());
+  if (vCnt   && vCnt.value.trim())      params.set('country',  vCnt.value.trim());
+  if (vLoc   && vLoc.value.trim())      params.set('location', vLoc.value.trim());
+  try {
+    const res  = await fetch('/api/sent?' + params.toString());
+    const data = await res.json();
+    if (scnt) scnt.textContent = '(' + data.total.toLocaleString() + ')';
+    stbody.innerHTML = data.rows.length ? data.rows.map(function(e) {
+      var av = e.avatar
+        ? '<img class="av" src="' + e.avatar + '&s=56" alt="" loading="lazy">'
+        : '<span class="av-ph">' + (e.login||e.email||'?').slice(0,1).toUpperCase() + '</span>';
+      var userCell = av + (e.login
+        ? '<a href="' + (e.profile||'') + '" target="_blank" style="color:#555;font-size:.78rem">@' + e.login + '</a>'
+        : '<span style="font-size:.78rem;color:#aaa">' + e.email + '</span>');
+      var sentAt = (e.sent_at||'').replace('T',' ').slice(0,19);
+      var bodyText = (e.body||'');
+      var preview = bodyText.slice(0,80).replace(/</g,'&lt;') + (bodyText.length>80?'...':'');
+      return '<tr>'
+        + '<td>' + userCell + '</td>'
+        + '<td style="font-size:.8rem">' + (e.name||'&mdash;') + '</td>'
+        + '<td><a href="mailto:' + e.email + '" style="color:#d97706;font-size:.78rem">' + e.email + '</a></td>'
+        + '<td style="font-size:.78rem">' + (e.country||'&mdash;') + '</td>'
+        + '<td style="font-size:.78rem;color:#666">' + (e.subject||'&mdash;') + '</td>'
+        + '<td style="font-size:.72rem;color:#888;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + preview + '</td>'
+        + '<td style="font-size:.72rem;color:#22c55e;white-space:nowrap">' + sentAt + '</td>'
+        + '</tr>';
+    }).join('') : '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px">No sent emails yet</td></tr>';
+    sfoot.textContent = data.total > 500 ? 'Showing 500 of ' + data.total.toLocaleString() : '';
+  } catch(err) { stbody.innerHTML = '<tr><td colspan="7" style="color:#ef4444;padding:16px">Error: ' + err.message + '</td></tr>'; }
+}
+['sf-email','sf-name','sf-country','sf-location'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', () => { clearTimeout(sentTimer); sentTimer = setTimeout(fetchSent, 350); });
+});
+
+// ── CSV import ─────────────────────────────────────────────────────────────
+const fileInput = document.getElementById('csv-file');
+const csvName   = document.getElementById('csv-name');
+const importBtn = document.getElementById('csv-import-btn');
+const csvMsg    = document.getElementById('csv-msg');
+
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files[0];
+  csvName.textContent = f ? f.name : 'No file chosen';
+  importBtn.disabled  = !f;
+});
+
+importBtn.addEventListener('click', async () => {
+  const f = fileInput.files[0];
+  if (!f) return;
+  importBtn.disabled = true;
+  csvMsg.style.color = '#aaa';
+  csvMsg.textContent = 'Parsing…';
+
+  const text  = await f.text();
+  const lines = text.split(String.fromCharCode(10)).map(s => s.trim()).filter(Boolean);
+  if (!lines.length) { csvMsg.textContent = 'Empty file'; importBtn.disabled=false; return; }
+
+  const header   = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g,''));
+  const emailCol = header.findIndex(h => h.includes('email'));
+  const nameCol  = header.findIndex(h => h.includes('name'));
+  const loginCol = header.findIndex(h => h.includes('login') || h.includes('username'));
+  const locCol   = header.findIndex(h => h.includes('location') || h.includes('country'));
+
+  if (emailCol === -1) {
+    csvMsg.style.color='#ef4444';
+    csvMsg.textContent='No "email" column found in CSV header';
+    importBtn.disabled=false; return;
+  }
+
+  function cell(cells, idx) {
+    return idx===-1||!cells[idx] ? '' : cells[idx].trim().replace(/^"|"$/g,'');
+  }
+
+  const entries = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(',');
+    const email = cell(c, emailCol);
+    if (!email || !email.includes('@')) continue;
+    entries.push({ email, name: cell(c,nameCol), login: cell(c,loginCol), location: cell(c,locCol) });
+  }
+
+  if (!entries.length) { csvMsg.textContent='No valid emails found'; importBtn.disabled=false; return; }
+  csvMsg.textContent = 'Importing ' + entries.length + ' entries…';
+
+  const res  = await fetch('/import', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ entries })
+  });
+  const data = await res.json();
+  csvMsg.style.color = data.added > 0 ? '#22c55e' : '#aaa';
+  csvMsg.textContent = '✓ Added ' + data.added + ' new · skipped ' + data.skipped + ' duplicates';
+  importBtn.disabled = false;
+  setTimeout(() => location.reload(), 1500);
+});
+
+// ── Email Template Editor ─────────────────────────────────────────────────
+async function loadTemplate() {
+  try {
+    const r = await fetch('/api/template');
+    const d = await r.json();
+    document.getElementById('tpl-subject').value = d.subject || '';
+    document.getElementById('tpl-body').value    = d.body    || '';
+    updatePreview();
+  } catch(e) {}
+}
+function updatePreview() {
+  var s = document.getElementById('tpl-subject').value;
+  var b = document.getElementById('tpl-body').value;
+  var preview = 'Subject: ' + s + String.fromCharCode(10) + String.fromCharCode(10)
+    + 'Hi Alex,' + String.fromCharCode(10) + String.fromCharCode(10) + b;
+  document.getElementById('tpl-preview').textContent = preview;
+}
+document.getElementById('tpl-subject').addEventListener('input', updatePreview);
+document.getElementById('tpl-body').addEventListener('input', updatePreview);
+async function saveTemplate() {
+  var msg = document.getElementById('tpl-msg');
+  var s = document.getElementById('tpl-subject').value.trim();
+  var b = document.getElementById('tpl-body').value.trim();
+  if (!s || !b) { msg.style.color='#ef4444'; msg.textContent='Subject and body required.'; return; }
+  msg.style.color='#aaa'; msg.textContent='Saving…';
+  try {
+    var r = await fetch('/api/template', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ subject: s, body: b })
+    });
+    var d = await r.json();
+    msg.style.color = d.ok ? '#16a34a' : '#ef4444';
+    msg.textContent = d.ok ? '✓ Saved — next send will use this template.' : d.msg;
+  } catch(e) { msg.style.color='#ef4444'; msg.textContent='Error: '+e.message; }
+}
+loadTemplate();
+</script>
+</body>
+</html>`;
+}
+
+function startDashboard(port = 3000) {
+  const server = http.createServer((req, res) => {
+
+    // ── GET /api/stats ─────────────────────────────────────────────────────
+    if (req.method === 'GET' && req.url === '/api/stats') {
+      syncState();
+      const r2 = db.exec(
+        `SELECT COUNT(*) FROM emails WHERE email NOT LIKE '_no_email_%' AND email NOT IN (SELECT email FROM sent)`
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        collected:       emails.filter(e => !e.email.startsWith('_no_email_')).length,
+        sent:            dbSentCount(),
+        daily:           dbSentToday(),
+        unsent:          r2.length ? r2[0].values[0][0] : 0,
+        lastId:          state.lastId,
+        collecting:      collecting,
+        targets:         getTargets(),
+        collectProgress: {
+          seg:   collectProgress.segIdx,
+          page:  collectProgress.segPage,
+          total: collectProgress.total,
+          pct:   Math.min(100, ((collectProgress.segIdx * 10 + (collectProgress.segPage - 1)) / (collectProgress.total * 10)) * 100)
+        },
+        campaignRunning: campaignRunning,
+        sendingNow:      sendingNow,
+        lastSent:        lastSent,
+        logs:            logBuffer.slice(0, 30)
+      }));
+      return;
+    }
+
+    // ── GET /api/targets ───────────────────────────────────────────────────
+    if (req.method === 'GET' && req.url === '/api/targets') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        selected:  getTargets(),
+        countries: Object.keys(COUNTRY_SEARCH),
+        regions:   REGIONS
+      }));
+      return;
+    }
+
+    // ── POST /api/targets ──────────────────────────────────────────────────
+    if (req.method === 'POST' && req.url === '/api/targets') {
+      let raw = '';
+      req.on('data', d => raw += d);
+      req.on('end', () => {
+        try {
+          const sel = (JSON.parse(raw).countries || []).filter(c => COUNTRY_SEARCH[c]);
+          if (!sel.length) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, msg: 'Select at least one country.' }));
+            return;
+          }
+          setState('targets', JSON.stringify(sel));
+          setState('segIdx', 0);
+          setState('segPage', 1);
+          dbSave();
+          targetsVersion++;
+          log('Collection targets set → ' + sel.join(', '));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, msg: 'Targets saved: ' + sel.join(', ') }));
+        } catch(e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, msg: 'Invalid request.' }));
+        }
+      });
+      return;
+    }
+
+    // ── GET /api/template ──────────────────────────────────────────────────
+    if (req.method === 'GET' && req.url === '/api/template') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ subject: getCampaignSubject(), body: getCampaignBody() }));
+      return;
+    }
+
+    // ── GET /api/sent ──────────────────────────────────────────────────────
+    if (req.method === 'GET' && req.url.startsWith('/api/sent')) {
+      const qs = new URL('http://x' + req.url).searchParams;
+      const conditions = [];
+      const params = [];
+      const like = (col, val) => { conditions.push('LOWER('+col+') LIKE ?'); params.push('%'+val.toLowerCase()+'%'); };
+      if (qs.get('email'))    like('s.email', qs.get('email'));
+      if (qs.get('name'))     like('e.name',  qs.get('name'));
+      if (qs.get('country'))  like('e.country', qs.get('country'));
+      if (qs.get('location')) like('e.location', qs.get('location'));
+      const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+      const sql = 'SELECT s.email, s.sent_at, s.subject, s.body, e.name, e.avatar, e.country, e.location, e.company, e.login, e.profile, e.followers, e.hireable '
+        + 'FROM sent s LEFT JOIN emails e ON s.email=e.email ' + where
+        + ' ORDER BY s.sent_at DESC LIMIT 500';
+      let rows = [];
+      try {
+        const r = db.exec(sql, params);
+        if (r.length) {
+          const cols = r[0].columns;
+          rows = r[0].values.map(row => { const o={}; cols.forEach((c,i)=>o[c]=row[i]); return o; });
+        }
+      } catch(e) {}
+      const total = db.exec('SELECT COUNT(*) FROM sent s LEFT JOIN emails e ON s.email=e.email ' + where, params);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ rows, total: total.length ? total[0].values[0][0] : 0 }));
+      return;
+    }
+
+    // ── GET /api/emails ────────────────────────────────────────────────────
+    if (req.method === 'GET' && req.url.startsWith('/api/emails')) {
+      const qs  = new URL('http://x' + req.url).searchParams;
+      const conditions = ["emails.email NOT LIKE '_no_email_%'"];
+      const params = [];
+      const like = (col, val) => { conditions.push('LOWER(emails.'+col+') LIKE ?'); params.push('%'+val.toLowerCase()+'%'); };
+      if (qs.get('login'))       like('login', qs.get('login'));
+      if (qs.get('name'))        like('name',  qs.get('name'));
+      if (qs.get('email'))       like('email', qs.get('email'));
+      if (qs.get('location'))    like('location', qs.get('location'));
+      if (qs.get('company'))     like('company',  qs.get('company'));
+      if (qs.get('minFollowers')) { conditions.push('emails.followers >= ?'); params.push(parseInt(qs.get('minFollowers'))||0); }
+      if (qs.get('hireable') === 'yes') { conditions.push('emails.hireable = 1'); }
+      if (qs.get('hireable') === 'no')  { conditions.push('emails.hireable = 0'); }
+      const sentFilter = qs.get('sent');
+      const where = 'WHERE ' + conditions.join(' AND ');
+      const sql = 'SELECT emails.*, (CASE WHEN s.email IS NOT NULL THEN 1 ELSE 0 END) as is_sent FROM emails LEFT JOIN sent s ON emails.email=s.email ' + where + ' ORDER BY emails.seen_at DESC LIMIT 500';
+      let rows = [];
+      try {
+        const r = db.exec(sql, params);
+        if (r.length) {
+          const cols = r[0].columns;
+          rows = r[0].values.map(row => { const o={}; cols.forEach((c,i)=>o[c]=row[i]); return o; });
+        }
+        if (sentFilter === 'sent')   rows = rows.filter(r => r.is_sent);
+        if (sentFilter === 'unsent') rows = rows.filter(r => !r.is_sent);
+      } catch(e) { console.error('api/emails SQL error:', e.message); }
+      const total = db.exec('SELECT COUNT(*) FROM emails ' + where, params);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ rows, total: total.length ? total[0].values[0][0] : 0 }));
+      return;
+    }
+
+    // ── GET /export.csv ────────────────────────────────────────────────────
+    if (req.method === 'GET' && req.url === '/export.csv') {
+      const allRows = dbAllEmails().filter(e => !e.email.startsWith('_no_email_'));
+      const COLS = ['email','name','login','location','country','company','followers','repos','hireable','profile','seen_at'];
+      const csv  = [COLS.join(','),
+        ...allRows.map(e => COLS.map(k => '"' + String(e[k]??'').replace(/"/g,'""') + '"').join(','))
+      ].join('\n');
+      res.writeHead(200, {
+        'Content-Type': 'text/csv',
+        'Content-Disposition': 'attachment; filename="realman-emails-' + new Date().toISOString().slice(0,10) + '.csv"'
+      });
+      res.end(csv);
+      return;
+    }
+
+    // ── POST /import ───────────────────────────────────────────────────────
+    if (req.method === 'POST' && req.url === '/import') {
+      let body = '';
+      req.on('data', d => body += d);
+      req.on('end', () => {
+        try {
+          const { entries = [] } = JSON.parse(body);
+          let added = 0, skipped = 0;
+          for (const e of entries) {
+            const key = (e.email || '').toLowerCase().trim();
+            if (!key || !key.includes('@')) { skipped++; continue; }
+            if (dbEmailExists(key)) { skipped++; continue; }
+            dbInsertEmail({
+              email: key, login: e.login || '', name: e.name || '',
+              location: e.location || '', country: extractCountry(e.location || ''),
+              company: '', bio: '', blog: '', twitter: '',
+              followers: 0, repos: 0, hireable: false, avatar: '', profile: '',
+              seen_at: new Date().toISOString()
+            });
+            added++;
+          }
+          syncState();
+          log('CSV import: +' + added + ' added, ' + skipped + ' skipped — total: ' + emails.length);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ added, skipped, total: emails.length }));
+        } catch(e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /api/template ─────────────────────────────────────────────────
+    if (req.method === 'POST' && req.url === '/api/template') {
+      let body = '';
+      req.on('data', d => body += d);
+      req.on('end', () => {
+        try {
+          const { subject, body: bodyText } = JSON.parse(body);
+          if (subject) setState('campaign_subject', subject.trim());
+          if (bodyText) setState('campaign_body', bodyText.trim());
+          dbSave();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, msg: 'Template saved.' }));
+        } catch(e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, msg: e.message }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /ctrl/* ───────────────────────────────────────────────────────
+    if (req.method === 'POST' && req.url.startsWith('/ctrl/')) {
+      const action = req.url.slice(6);
+      let ok = true, msg = '';
+      if (action === 'collect-start') {
+        if (collecting) {
+          msg = 'Collector already running.';
+        } else {
+          if (!GH_TOKEN) { ok=false; msg='GH_TOKEN not set in .env'; }
+          else { collectLoop().catch(e => log('Collector error:', e.message)); msg = 'Collector started — scanning GitHub (US only)…'; }
+        }
+      } else if (action === 'campaign-start') {
+        startCampaign();
+        msg = campaignRunning ? 'Campaign started — 50 emails/day (1 every 28.8 min).' : 'Campaign already running.';
+      } else if (action === 'stop-all') {
+        collecting = false;
+        stopCampaign();
+        msg = 'Collector and campaign stopped.';
+      } else {
+        ok = false; msg = 'Unknown action: ' + action;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok, msg }));
+      return;
+    }
+
+    // ── GET / (dashboard) ──────────────────────────────────────────────────
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(dashboardHTML());
+  });
+  server.on('error', e => {
+    if (e.code === 'EADDRINUSE') {
+      log(`Port ${port} in use — trying ${port + 1}`);
+      startDashboard(port + 1);
+    } else {
+      log('Dashboard error:', e.message);
+    }
+  });
+  server.listen(port, () => {
+    log(`Dashboard → http://localhost:${port}`);
+  });
+}
+
+// ── Startup validation ─────────────────────────────────────────────────────
+function validate() {
+  const missing = [];
+  if (!GH_TOKEN)       missing.push('GH_TOKEN');
+  if (!GMAIL_USER)     missing.push('GMAIL_USER');
+  if (!GMAIL_APP_PASS) missing.push('GMAIL_APP_PASSWORD');
+  if (missing.length) {
+    console.error('ERROR: Missing .env variables:', missing.join(', '));
+    console.error('Copy .env.example to .env and fill in the values.');
+    process.exit(1);
+  }
+}
+
+// ── Campaign scheduler ─────────────────────────────────────────────────────
+let campaignRunning = false;
+let campaignTimer   = null;
+
+function startCampaign() {
+  if (campaignRunning) { log('Campaign already running.'); return; }
+  campaignRunning = true;
+  log('Campaign STARTED — 50/day (1 every 28.8 min)');
+  campaignTick();
+  nextSendAt = Date.now() + SEND_INTERVAL_MS;
+  campaignTimer = setInterval(async () => {
+    await campaignTick();
+    nextSendAt = Date.now() + SEND_INTERVAL_MS;
+  }, SEND_INTERVAL_MS);
+}
+
+function stopCampaign() {
+  if (!campaignRunning) { log('Campaign is not running.'); return; }
+  campaignRunning = false;
+  clearInterval(campaignTimer);
+  campaignTimer = null;
+  nextSendAt    = null;
+  log('Campaign STOPPED.');
+}
+
+// ── CLI keyboard commands ──────────────────────────────────────────────────
+function startCLI() {
+  const readline = require('readline');
+  const rl = readline.createInterface({ input: process.stdin });
+  console.log('Commands: start | stop | status | quit');
+  rl.on('line', line => {
+    const cmd = line.trim().toLowerCase();
+    if (cmd === 'start')  startCampaign();
+    else if (cmd === 'stop')   stopCampaign();
+    else if (cmd === 'status') {
+      syncState();
+      log('Collected: ' + emails.filter(e => !e.email.startsWith('_no_email_')).length + ' | Sent: ' + dbSentCount() + ' | Today: ' + dbSentToday() + ' | Campaign: ' + (campaignRunning?'running':'stopped'));
+    }
+    else if (cmd === 'quit' || cmd === 'exit') process.exit(0);
+    else console.log('Unknown command. Try: start | stop | status | quit');
+  });
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────
+async function main() {
+  validate();
+  const SQL = await initSqlJs();
+  dbInit(SQL);
+  syncState();
+  log('Realman server starting…');
+  log('DB: ' + emails.filter(e => !e.email.startsWith('_no_email_')).length + ' US emails | ' + dbSentCount() + ' sent');
+  log('Campaign: 50 emails/day · 1 every 28.8 min · hard daily cap enforced');
+
+  startDashboard(3000);
+
+  // Verify Gmail credentials (warning only — don't crash)
+  try {
+    await transporter.verify();
+    log('Gmail auth OK —', GMAIL_USER);
+  } catch(e) {
+    log('⚠ Gmail auth failed:', e.message);
+    log('  SMTP may be blocked locally — will work on VPS.');
+  }
+
+  log('Ready. Use the dashboard buttons or type: start | stop | status | quit');
+
+  // Start CLI
+  startCLI();
+}
+
+main().catch(e => { console.error('Fatal:', e); process.exit(1); });

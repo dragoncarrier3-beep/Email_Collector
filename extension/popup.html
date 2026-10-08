@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Realman</title>
+  <style>
+    :root {
+      --bg:      #F0F2FF;
+      --surface: #FFFFFF;
+      --border:  #E2E5F8;
+      --text:    #1A1D2E;
+      --muted:   #6B7280;
+      --primary: #5B6AF0;
+      --green:   #0EA371;
+      --red:     #E5484D;
+      --gh:      #24292f;
+      --slack:   #4A154B;
+      --radius:  10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0 }
+    body {
+      font: 13px/1.5 system-ui, sans-serif;
+      width: 380px; min-height: 260px;
+      background: var(--bg); color: var(--text);
+      display: flex; flex-direction: column;
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg,#5B6AF0,#8B5CF6);
+      padding: 10px 14px 0; flex-shrink: 0;
+    }
+    .header-top { display:flex; align-items:center; gap:8px; margin-bottom:10px }
+    .logo {
+      width:30px; height:30px; border-radius:8px;
+      background:rgba(255,255,255,.2);
+      display:flex; align-items:center; justify-content:center;
+      font-size:16px; font-weight:800; color:#fff;
+    }
+    .brand     { color:#fff; font-size:15px; font-weight:700 }
+    .brand-sub { color:rgba(255,255,255,.65); font-size:10px }
+
+    /* Tabs */
+    .tabs { display:flex }
+    .tab {
+      flex:1; padding:7px 4px 6px; text-align:center; cursor:pointer;
+      font-size:11px; font-weight:600; color:rgba(255,255,255,.55);
+      border-bottom:3px solid transparent; white-space:nowrap;
+      transition:color .15s; user-select:none;
+    }
+    .tab:hover  { color:rgba(255,255,255,.85) }
+    .tab.active { color:#fff; border-bottom-color:#fff }
+
+    section { display:none; flex-direction:column; flex:1 }
+    section.active { display:flex }
+
+    /* Buttons */
+    .btn {
+      border:none; border-radius:8px; padding:7px 14px;
+      font:600 12px system-ui; cursor:pointer; white-space:nowrap;
+      display:inline-flex; align-items:center; gap:5px;
+      transition:filter .15s, transform .08s;
+    }
+    .btn:hover  { filter:brightness(1.08) }
+    .btn:active { transform:scale(.97) }
+    .btn-ghost  { background:var(--surface); color:var(--text); border:1.5px solid var(--border) }
+    .btn-ghost:hover { background:var(--bg) }
+    .btn-primary { background:var(--primary); color:#fff }
+    .btn-green   { background:var(--green);   color:#fff }
+    .btn-red     { background:var(--red);     color:#fff }
+    .btn-gh      { background:var(--gh);      color:#fff }
+    .btn-slack   { background:var(--slack);   color:#fff }
+    .btn-stop    { background:var(--red);     color:#fff }
+    .btn-big {
+      width:100%; padding:11px; font-size:13px;
+      border-radius:10px; justify-content:center;
+    }
+
+    .row { display:flex; gap:6px; align-items:center }
+
+    /* Forms */
+    .field-label {
+      font-size:10px; font-weight:700; color:var(--muted);
+      text-transform:uppercase; letter-spacing:.5px;
+      display:block; margin-bottom:4px;
+    }
+    input, textarea {
+      width:100%; border:1.5px solid var(--border); border-radius:8px;
+      padding:7px 10px; font:13px system-ui; outline:none;
+      background:var(--surface); color:var(--text);
+      transition:border-color .15s, box-shadow .15s;
+    }
+    input:focus, textarea:focus {
+      border-color:var(--primary);
+      box-shadow:0 0 0 3px rgba(91,106,240,.15);
+    }
+    .hint { font-size:10px; color:var(--muted); margin-top:3px; line-height:1.6 }
+    .hint a { color:var(--primary) }
+
+    /* Mode toggle */
+    .mode-toggle { display:flex; gap:4px; background:var(--bg); border-radius:8px; padding:3px }
+    .mode-btn {
+      flex:1; padding:5px 8px; border:none; border-radius:6px; font:600 11px system-ui;
+      cursor:pointer; color:var(--muted); background:transparent; transition:all .15s;
+    }
+    .mode-btn.active { background:var(--surface); color:var(--text); box-shadow:0 1px 4px rgba(0,0,0,.1) }
+
+    /* Cards */
+    .card {
+      background:var(--surface); border:1.5px solid var(--border);
+      border-radius:var(--radius); padding:12px;
+    }
+    .card-header {
+      display:flex; align-items:center; gap:7px; margin-bottom:10px;
+    }
+    .src-dot {
+      width:24px; height:24px; border-radius:6px; flex-shrink:0;
+      display:flex; align-items:center; justify-content:center;
+      font-size:13px; font-weight:700; color:#fff;
+    }
+    .src-dot.gh    { background:var(--gh)    }
+    .src-dot.slack { background:var(--slack)  }
+    .card-title  { font-size:12px; font-weight:700; flex:1 }
+    .card-hint   { font-size:10px; color:var(--muted) }
+
+    /* Collect */
+    .panel { padding:10px; display:flex; flex-direction:column; gap:8px }
+
+    /* Progress */
+    .prog-wrap { padding:0 10px 10px; display:none }
+    .prog-wrap.visible { display:block }
+    .prog-card {
+      background:var(--surface); border:1.5px solid var(--border);
+      border-radius:var(--radius); padding:10px 12px;
+    }
+    .prog-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px }
+    .prog-status { font-size:11px; font-weight:600; color:var(--text) }
+    .prog-count  { font-size:18px; font-weight:800; color:var(--primary); line-height:1 }
+    .prog-count-lbl { font-size:9px; color:var(--muted); text-align:right }
+    .prog-track {
+      background:var(--border); border-radius:6px; height:8px;
+      overflow:hidden; margin-bottom:6px; position:relative;
+    }
+    .prog-bar {
+      height:8px; background:linear-gradient(90deg,var(--primary),#8B5CF6);
+      border-radius:6px; width:0%; transition:width .4s;
+    }
+    .prog-bar.pulse {
+      animation:pulse-bar 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse-bar {
+      0%,100% { opacity:1 }
+      50% { opacity:.5 }
+    }
+    .prog-indeterminate {
+      position:absolute; top:0; left:-40%; width:40%; height:100%;
+      background:linear-gradient(90deg,transparent,rgba(91,106,240,.5),transparent);
+      animation:slide 1.2s ease-in-out infinite;
+    }
+    @keyframes slide { to { left:100% } }
+    .prog-lbl { font-size:11px; color:var(--muted) }
+
+    /* List */
+    .list-wrap { overflow-y:auto; flex:1; max-height:220px }
+    .row-item  {
+      display:flex; align-items:center; gap:8px;
+      padding:7px 12px; border-bottom:1px solid var(--border);
+      transition:background .12s;
+    }
+    .row-item:hover { background:var(--bg) }
+    .avatar { width:28px; height:28px; border-radius:50%; background:var(--border); flex-shrink:0; overflow:hidden }
+    .avatar img { width:100%; height:100% }
+    .info   { flex:1; min-width:0 }
+    .login  { font-weight:700; font-size:12px }
+    .email-txt { color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+    .src-pill  {
+      font-size:9px; font-weight:700; padding:1px 6px; border-radius:20px;
+      color:#fff; flex-shrink:0;
+    }
+    .src-pill.gh    { background:var(--gh)   }
+    .src-pill.slack { background:var(--slack) }
+    .copy-btn { opacity:0; border:none; background:none; cursor:pointer; font-size:14px; padding:2px; border-radius:4px; transition:opacity .12s }
+    .row-item:hover .copy-btn { opacity:1 }
+    .real-name  { font-weight:400; color:var(--muted); font-size:11px; margin-left:4px }
+    .row-meta   { font-size:10px; color:var(--muted); margin-top:1px; line-height:1.5 }
+    .row-stats  { font-size:10px; color:var(--primary); margin-top:1px }
+    .row-bio    { font-size:10px; color:var(--muted); margin-top:2px; line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px }
+    .empty { padding:36px 16px; text-align:center; color:var(--muted); font-size:12px; line-height:2 }
+    .empty-icon { font-size:30px; display:block; margin-bottom:4px }
+
+    .toolbar {
+      padding:8px 10px; border-top:1.5px solid var(--border);
+      display:flex; gap:6px; background:var(--surface);
+    }
+
+    /* Send tab */
+    .send-panel { padding:10px; display:flex; flex-direction:column; gap:10px; overflow-y:auto; flex:1 }
+
+    /* Scheduled queue */
+    .queue-card {
+      background:var(--surface); border:1.5px solid var(--border);
+      border-radius:var(--radius); padding:10px 12px; display:none; flex-direction:column; gap:4px;
+    }
+    .queue-card.visible { display:flex }
+    .queue-label { font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px }
+    .queue-row {
+      display:flex; align-items:center; gap:6px; padding:4px 0;
+      border-bottom:1px solid var(--border); font-size:11px;
+    }
+    .queue-row:last-child { border-bottom:none }
+    .queue-status { width:16px; text-align:center; flex-shrink:0 }
+    .queue-email  { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+    .queue-time   { color:var(--muted); font-size:10px; flex-shrink:0 }
+    .queue-cancel { border:none; background:none; cursor:pointer; color:var(--muted); font-size:12px; padding:1px 4px; border-radius:4px; flex-shrink:0 }
+    .queue-cancel:hover { background:var(--bg); color:var(--red) }
+    .q-sent      { opacity:.5; text-decoration:line-through }
+    .q-cancelled { opacity:.35; text-decoration:line-through }
+    .q-error     { color:var(--red) }
+
+    /* Preview */
+    .preview-card {
+      background:var(--surface); border:1.5px solid var(--border);
+      border-radius:var(--radius); padding:12px; display:none; flex-direction:column; gap:6px;
+    }
+    .preview-card.visible { display:flex }
+    .preview-subject { font-size:11px; font-weight:700; color:var(--text); padding-bottom:6px; border-bottom:1px solid var(--border) }
+    .preview-body { font-size:11px; color:var(--text); white-space:pre-wrap; line-height:1.7; background:var(--bg); border-radius:6px; padding:8px; max-height:130px; overflow-y:auto }
+
+    .stat-row {
+      display:flex; gap:6px;
+    }
+    .stat-chip {
+      flex:1; background:var(--surface); border:1.5px solid var(--border);
+      border-radius:8px; padding:8px 10px; text-align:center;
+    }
+    .stat-num  { font-size:18px; font-weight:800; color:var(--primary) }
+    .stat-lbl  { font-size:10px; color:var(--muted); font-weight:600 }
+
+    .msg-card  { background:var(--surface); border:1.5px solid var(--border); border-radius:var(--radius); padding:12px; display:flex; flex-direction:column; gap:8px }
+    .msg-card textarea { resize:vertical; min-height:72px }
+
+    /* Confirm box */
+    .confirm-box {
+      background:#FFF7ED; border:1.5px solid #FDDCAB;
+      border-radius:var(--radius); padding:12px; display:none;
+      flex-direction:column; gap:8px;
+    }
+    .confirm-box.visible { display:flex }
+    .confirm-box p { font-size:12px; line-height:1.6 }
+    .confirm-box strong { color:#C2410C }
+
+    .send-footer { padding:6px 10px; border-top:1.5px solid var(--border); font-size:11px; color:var(--muted); background:var(--surface); min-height:26px }
+
+    /* Settings */
+    .settings-panel { padding:10px; display:flex; flex-direction:column; gap:8px; overflow-y:auto; flex:1 }
+    .settings-group { background:var(--surface); border:1.5px solid var(--border); border-radius:var(--radius); padding:12px; display:flex; flex-direction:column; gap:10px }
+    .settings-title { font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px }
+
+    ::-webkit-scrollbar { width:4px }
+    ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-top">
+      <div class="logo">R</div>
+      <div style="flex:1">
+        <div class="brand">Realman</div>
+        <div class="brand-sub">Email Collector &amp; Campaign</div>
+      </div>
+      <button id="open-table-btn" title="Open full user table" style="
+        border:none; background:rgba(255,255,255,.18); color:#fff;
+        border-radius:7px; padding:5px 10px; font:600 11px system-ui;
+        cursor:pointer; display:flex; align-items:center; gap:4px;
+        white-space:nowrap; transition:background .15s;
+      ">⊞ Table</button>
+    </div>
+    <div class="tabs">
+      <div class="tab active" data-tab="collect">🔍 Collect</div>
+      <div class="tab" data-tab="send">📨 Send</div>
+      <div class="tab" data-tab="saved">💌 Saved <span id="badge"></span></div>
+      <div class="tab" data-tab="settings">⚙️</div>
+    </div>
+  </div>
+
+  <!-- ── COLLECT ── -->
+  <section id="tab-collect" class="active">
+    <div style="padding:8px 10px 0">
+      <button id="open-table-btn2" style="
+        width:100%; border:1.5px solid var(--border); background:var(--surface); color:var(--primary);
+        font:700 12px system-ui; cursor:pointer; padding:7px 0;
+        border-radius:8px; display:flex; align-items:center; justify-content:center; gap:5px;
+        transition:background .15s, border-color .15s; letter-spacing:.2px;
+      " onmouseover="this.style.background='#eef0ff';this.style.borderColor='var(--primary)'"
+         onmouseout="this.style.background='var(--surface)';this.style.borderColor='var(--border)'">
+        ⊞ Dashboard
+      </button>
+    </div>
+    <div class="panel">
+
+      <!-- GitHub -->
+      <div class="card">
+        <div class="card-header">
+          <div class="src-dot gh">🐱</div>
+          <div class="card-title">GitHub</div>
+          <div class="card-hint">Leave blank = scan ALL users</div>
+        </div>
+        <input id="target" placeholder="Optional: org or usernames (e.g. vercel)" style="margin-bottom:6px"/>
+        <div class="row">
+          <button class="btn btn-gh" id="start-btn">▶ Start</button>
+          <button class="btn btn-stop" id="stop-btn" style="display:none">■ Stop</button>
+          <button class="btn btn-ghost" id="clear-collect" style="margin-left:auto">🗑 Clear</button>
+        </div>
+      </div>
+
+      <!-- Slack -->
+      <div class="card">
+        <div class="card-header">
+          <div class="src-dot slack">#</div>
+          <div class="card-title">Slack</div>
+          <div class="card-hint">All workspace members</div>
+        </div>
+        <div class="row">
+          <button class="btn btn-slack" id="slack-btn">▶ Import</button>
+          <button class="btn btn-stop"  id="slack-stop-btn" style="display:none">■ Stop</button>
+          <span id="slack-status" style="font-size:11px;color:var(--muted);margin-left:4px"></span>
+        </div>
+        <div class="hint" style="margin-top:6px">Need a bot token? <a href="#" id="slack-help-link">See Settings → Slack</a></div>
+      </div>
+    </div>
+
+    <div class="prog-wrap" id="progress-wrap">
+      <div class="prog-card">
+        <div class="prog-top">
+          <div class="prog-status" id="plabel">Starting…</div>
+          <div style="text-align:right">
+            <div class="prog-count" id="prog-found">0</div>
+            <div class="prog-count-lbl">emails found</div>
+          </div>
+        </div>
+        <div class="prog-track">
+          <div class="prog-bar pulse" id="pbar"></div>
+          <div class="prog-indeterminate" id="prog-indeterminate"></div>
+        </div>
+        <div class="prog-lbl" id="prog-sub"></div>
+      </div>
+    </div>
+
+    <div class="list-wrap" id="collect-list">
+      <div class="empty"><span class="empty-icon">🔍</span>Click Start to begin scanning. Leave the field blank to scan all of GitHub.</div>
+    </div>
+  </section>
+
+  <!-- ── SEND ── -->
+  <section id="tab-send">
+    <div class="send-panel">
+
+      <!-- Stats -->
+      <div class="stat-row">
+        <div class="stat-chip"><div class="stat-num" id="stat-total">0</div><div class="stat-lbl">Collected</div></div>
+        <div class="stat-chip"><div class="stat-num" id="stat-sent" style="color:var(--green)">0</div><div class="stat-lbl">All-time Sent</div></div>
+        <div class="stat-chip"><div class="stat-num" id="stat-daily">0</div><div class="stat-lbl">Today</div></div>
+        <div class="stat-chip"><div class="stat-num" style="color:var(--primary)">10/hr</div><div class="stat-lbl">Rate</div></div>
+      </div>
+
+      <!-- Campaign status card -->
+      <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius);padding:14px 16px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="campaign-dot" style="width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0;transition:background .3s"></span>
+          <span id="campaign-state-label" style="font-size:13px;font-weight:700">Stopped</span>
+        </div>
+        <div id="campaign-status-text" style="font-size:11px;color:var(--muted);line-height:1.6">
+          Click Start to send automatically — 10 emails per hour, around the clock.
+        </div>
+        <div style="font-size:10px;color:var(--muted)">Subject: <strong>Working together</strong> · Plain text · 1-to-1 sends · No spam triggers</div>
+      </div>
+
+      <!-- Start / Stop button -->
+      <button class="btn btn-big" id="campaign-btn" style="background:var(--green);color:#fff">
+        ▶ Start Campaign
+      </button>
+
+    </div>
+    <div class="send-footer" id="send-footer">10 emails/hr · auto-rescans when list is exhausted · runs in background.</div>
+  </section>
+
+  <!-- ── SAVED ── -->
+  <section id="tab-saved">
+    <div style="padding:8px 10px 0;display:flex;gap:6px">
+      <input id="add-email-input" placeholder="Add email: name &lt;email@example.com&gt; or just email" style="flex:1;font-size:12px"/>
+      <button class="btn btn-primary" id="add-email-btn" style="padding:7px 10px;white-space:nowrap">+ Add</button>
+    </div>
+    <div id="add-email-msg" style="padding:2px 10px 0;font-size:11px;color:var(--green);min-height:16px"></div>
+    <div class="list-wrap" id="saved-list">
+      <div class="empty"><span class="empty-icon">💌</span>No emails saved yet.</div>
+    </div>
+    <div class="toolbar">
+      <button class="btn btn-ghost" id="export-btn">⬇ CSV</button>
+      <button class="btn btn-ghost" id="copy-all-btn">📋 Copy All</button>
+      <button class="btn btn-red"   id="clear-all-btn" style="margin-left:auto">🗑 Clear All</button>
+    </div>
+  </section>
+
+  <!-- ── SETTINGS ── -->
+  <section id="tab-settings">
+    <div class="settings-panel">
+
+      <div class="settings-group">
+        <div class="settings-title">📧 Sender Gmail account</div>
+        <div>
+          <input id="sender-email" type="email" placeholder="dragonalche9421@gmail.com" autocomplete="off"/>
+          <div class="hint">Gmail address you send from. Must be signed into Chrome. Saves the account picker popup.</div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">🐱 GitHub Token <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></div>
+        <div>
+          <input id="token-input" type="password" placeholder="ghp_…" autocomplete="off"/>
+          <div class="hint">Only needed for private orgs. <a href="https://github.com/settings/tokens/new?scopes=read:org" target="_blank">Get one here →</a></div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title"># Slack Token <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></div>
+        <div>
+          <input id="slack-token" type="password" placeholder="xoxb-…" autocomplete="off"/>
+          <div class="hint">
+            1. Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> → Create App → From manifest<br>
+            2. Paste: <code style="font-size:10px;background:#f0f2ff;padding:1px 4px;border-radius:3px">{"features":{"bot_user":{"display_name":"Realman"}},"oauth_config":{"scopes":{"bot":["users:read","users:read.email"]}}}</code><br>
+            3. Install → copy Bot Token (xoxb-…)
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">📨 Automatic sending (Gmail API)</div>
+        <div class="hint" style="font-size:11px;line-height:1.8">
+          For one-click auto-send, set up a free Google OAuth client once:<br>
+          1. <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank">Enable the Gmail API</a> in a Google Cloud project.<br>
+          2. <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank">Configure the OAuth consent screen</a> (External, add yourself as a test user).<br>
+          3. <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Create Credentials → OAuth client ID → Chrome Extension</a>, and paste this extension's ID (from <code style="font-size:10px;background:#f0f2ff;padding:1px 4px;border-radius:3px">chrome://extensions</code>).<br>
+          4. Copy the client ID into <code style="font-size:10px;background:#f0f2ff;padding:1px 4px;border-radius:3px">manifest.json</code> → <code style="font-size:10px;background:#f0f2ff;padding:1px 4px;border-radius:3px">oauth2.client_id</code>, then reload.<br>
+          <strong>Until then</strong>, Send falls back to opening Gmail for a one-click send.
+        </div>
+      </div>
+
+      <div class="settings-group" style="background:#FFF7ED;border-color:#FDDCAB">
+        <div class="settings-title" style="color:#C2410C">⚠ Staying out of spam</div>
+        <div class="hint" style="font-size:11px;line-height:1.8">
+          No tool can guarantee inbox placement — the recipient's provider decides. To stay out of spam: keep volume low (this app sends only 3 / 2 days), each person gets a <strong>separate</strong> email, an opt-out line is added automatically, and you should only email people your message is genuinely relevant to. If recipients mark you as spam, future mail gets filtered — so relevance matters most.
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="btn btn-primary" id="save-settings">💾 Save</button>
+        <span id="save-msg" style="display:none;font-size:11px;color:var(--green);font-weight:600">✓ Saved!</span>
+      </div>
+
+    </div>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>
