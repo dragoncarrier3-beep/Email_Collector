@@ -897,6 +897,7 @@ function dashboardHTML() {
   .badge.on{border-color:rgba(52,211,153,.6);color:#34d399;background:rgba(52,211,153,.12)}
   .pulse{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 1.8s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
   @keyframes spin{to{transform:rotate(360deg)}}
   @keyframes slideUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
   @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
@@ -1119,6 +1120,38 @@ function dashboardHTML() {
   <!-- Toast -->
   <div id="send-toast"></div>
 
+  <!-- ── Live Progress Banners (visible on ALL tabs) ── -->
+  <div id="progress-banners" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+    <!-- Collecting Progress -->
+    <div id="collect-banner" style="display:none;background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(16,185,129,.03));border:1px solid rgba(16,185,129,.25);border-radius:var(--radius);padding:12px 16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;animation:blink 1.2s infinite"></span>
+          <span style="font-size:.82rem;font-weight:700;color:#10b981">COLLECTING EMAILS</span>
+        </div>
+        <span id="cb-pct" style="font-size:.82rem;font-weight:700;color:#10b981">0%</span>
+      </div>
+      <div style="width:100%;height:6px;background:rgba(16,185,129,.12);border-radius:3px;overflow:hidden">
+        <div id="cb-fill" style="width:0%;height:100%;background:#10b981;border-radius:3px;transition:width .5s ease"></div>
+      </div>
+      <div id="cb-detail" style="font-size:.72rem;color:var(--muted);margin-top:4px">Starting…</div>
+    </div>
+    <!-- Sending Progress -->
+    <div id="send-banner" style="display:none;background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(59,130,246,.03));border:1px solid rgba(59,130,246,.25);border-radius:var(--radius);padding:12px 16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b82f6;animation:blink 1.2s infinite"></span>
+          <span style="font-size:.82rem;font-weight:700;color:#3b82f6">SENDING CAMPAIGN</span>
+        </div>
+        <span id="sb-count" style="font-size:.82rem;font-weight:700;color:#3b82f6">0 / 0</span>
+      </div>
+      <div style="width:100%;height:6px;background:rgba(59,130,246,.12);border-radius:3px;overflow:hidden">
+        <div id="sb-fill" style="width:0%;height:100%;background:#3b82f6;border-radius:3px;transition:width .5s ease"></div>
+      </div>
+      <div id="sb-detail" style="font-size:.72rem;color:var(--muted);margin-top:4px">Waiting…</div>
+    </div>
+  </div>
+
   <!-- ════════════ DASHBOARD TAB ════════════ -->
   <div id="nav-dashboard" class="nav-page">
     <div class="stats">
@@ -1139,8 +1172,8 @@ function dashboardHTML() {
         <div class="stat-lbl">Unsent</div>
       </div>
       <div class="stat">
-        <div class="stat-val">50<span style="font-size:1rem;font-weight:600;color:var(--faint)">/day</span></div>
-        <div class="stat-lbl">Send Rate</div>
+        <div class="stat-val">${DAILY_LIMIT}<span style="font-size:1rem;font-weight:600;color:var(--faint)">/day</span></div>
+        <div class="stat-lbl">Daily Limit</div>
       </div>
       <div class="stat">
         <div class="stat-val" style="font-size:1.3rem">${nextSend}</div>
@@ -1485,13 +1518,10 @@ async function pollStatus(){
   try{
     var r=await fetch('/api/stats');var d=await r.json();
     setStatusDot('collect',d.collecting,d.collecting?'Collecting…':'Collector: Idle');
-    var sendBanner=document.getElementById('sending-banner');
     if(d.sendingNow){
       setStatusDot('send',true,'Sending to '+d.sendingNow.email+'…');
-      if(sendBanner){sendBanner.style.display='';sendBanner.textContent='↻ Sending to '+d.sendingNow.email+'…';}
     }else{
       setStatusDot('send',d.campaignRunning,d.campaignRunning?'Campaign Running':'Campaign: Off');
-      if(sendBanner)sendBanner.style.display='none';
     }
     if(d.lastSent&&d.lastSent.email!==_lastSentEmail){
       _lastSentEmail=d.lastSent.email;
@@ -1506,16 +1536,47 @@ async function pollStatus(){
       statVals[2].textContent=d.daily;
       statVals[3].textContent=d.unsent.toLocaleString();
     }
-    // Progress bar
+    // ── Collect progress banner ──
+    var cbEl=document.getElementById('collect-banner');
+    if(cbEl){
+      if(d.collecting&&d.collectProgress){
+        var cp=d.collectProgress;
+        cbEl.style.display='';
+        document.getElementById('cb-fill').style.width=cp.pct.toFixed(2)+'%';
+        document.getElementById('cb-pct').textContent=cp.pct.toFixed(1)+'%';
+        document.getElementById('cb-detail').textContent=
+          'Segment '+(cp.seg+1)+'/'+cp.total+' · page '+cp.page+'/10 · '+d.collected.toLocaleString()+' emails found';
+      }else cbEl.style.display='none';
+    }
+    // ── Send progress banner ──
+    var sbEl=document.getElementById('send-banner');
+    if(sbEl){
+      if(d.campaignRunning){
+        sbEl.style.display='';
+        var pct=d.dailyLimit>0?Math.min(100,(d.daily/d.dailyLimit)*100):0;
+        document.getElementById('sb-fill').style.width=pct.toFixed(1)+'%';
+        document.getElementById('sb-count').textContent=d.daily+' / '+d.dailyLimit+' today';
+        var detail='';
+        if(d.sendingNow) detail='Sending to '+d.sendingNow.email+' via '+d.sendingNow.via+'…';
+        else if(d.nextSendAt){
+          var ms=new Date(d.nextSendAt).getTime()-Date.now();
+          if(ms>0) detail='Next send in '+Math.ceil(ms/60000)+' min · min gap: '+d.minIntervalMin+' min';
+          else detail='Sending soon…';
+        }else detail='Waiting for next interval…';
+        if(d.lastSent) detail+=' · Last: '+d.lastSent.email;
+        document.getElementById('sb-detail').textContent=detail;
+      }else sbEl.style.display='none';
+    }
+    // Old progress bar compat
     var cpWrap=document.getElementById('collect-progress');
     if(cpWrap){
       if(d.collecting&&d.collectProgress){
-        var cp=d.collectProgress;
+        var cp2=d.collectProgress;
         cpWrap.style.display='';
-        document.getElementById('cp-fill').style.width=cp.pct.toFixed(2)+'%';
-        document.getElementById('cp-label').textContent=cp.pct.toFixed(1)+'%';
+        document.getElementById('cp-fill').style.width=cp2.pct.toFixed(2)+'%';
+        document.getElementById('cp-label').textContent=cp2.pct.toFixed(1)+'%';
         document.getElementById('cp-detail').textContent=
-          'Segment '+(cp.seg+1)+' / '+cp.total+' · page '+cp.page+'/10 · '+d.collected.toLocaleString()+' emails';
+          'Segment '+(cp2.seg+1)+' / '+cp2.total+' · page '+cp2.page+'/10 · '+d.collected.toLocaleString()+' emails';
       }else cpWrap.style.display='none';
     }
     var btnC=document.getElementById('btn-collect'),btnS=document.getElementById('btn-send');
@@ -2076,6 +2137,11 @@ function startDashboard(port = 3000) {
         campaignRunning: campaignRunning,
         sendingNow:      sendingNow,
         lastSent:        lastSent,
+        nextSendAt:      nextSendAt ? new Date(nextSendAt).toISOString() : null,
+        dailyLimit:      DAILY_LIMIT,
+        perAccountDaily: PER_ACCOUNT_DAILY,
+        perAccountHourly:PER_ACCOUNT_HOURLY,
+        minIntervalMin:  Math.round(MIN_INTERVAL_MS / 60000),
         accounts: smtpAccounts.map(a => ({
           user: a.user, host: a.host, port: a.port, name: a.name,
           ready: a.status.ready, error: a.status.error, checked: a.status.checkedAt,
