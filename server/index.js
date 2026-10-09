@@ -546,13 +546,20 @@ function getSendTargets() {
   return [];
 }
 
-// Segments: [{ q, country }] — every search query knows which country it targets
+// Segments: [{ q, country }] — round-robin across countries for even collection
 function buildSegments(targets) {
-  const segs = [];
-  for (const country of targets)
+  const perCountry = targets.map(country => {
+    const items = [];
     for (const loc of COUNTRY_SEARCH[country])
       for (const fb of FOLLOWER_BUCKETS)
-        segs.push({ q: `type:user location:${loc} followers:${fb}`, country });
+        items.push({ q: `type:user location:${loc} followers:${fb}`, country });
+    return items;
+  });
+  const segs = [];
+  const maxLen = Math.max(...perCountry.map(a => a.length));
+  for (let i = 0; i < maxLen; i++)
+    for (const items of perCountry)
+      if (i < items.length) segs.push(items[i]);
   return segs;
 }
 
@@ -1901,7 +1908,7 @@ function buildRow(e){
     +'<td style="font-size:.75rem;text-align:center">'+(e.followers||0).toLocaleString()+'</td>'
     +'<td style="font-size:.75rem;text-align:center">'+(e.repos||0)+'</td>'
     +'<td style="text-align:center">'+(e.hireable?'<span style="color:var(--green);font-size:.72rem;font-weight:700">yes</span>':'&mdash;')+'</td>'
-    +'<td style="text-align:center;color:'+(e.is_sent?'var(--green)':'var(--border)')+'">'+(e.is_sent?'✓':'&ndash;')+'</td>'
+    +'<td style="text-align:center">'+(e.is_sent?'<span style="background:rgba(16,185,129,.12);color:#10b981;padding:2px 8px;border-radius:99px;font-size:.65rem;font-weight:700">Sent</span>':'<span style="color:var(--border);font-size:.72rem">&ndash;</span>')+'</td>'
     +'<td>'+tgCell+'</td>'
     +'<td>'+phCell+'</td>'
     +'<td>'+liCell+'</td>'
