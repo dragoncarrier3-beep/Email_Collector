@@ -9,6 +9,7 @@ const initSqlJs = require('sql.js');
 // ── Config ─────────────────────────────────────────────────────────────────
 const GH_TOKEN         = process.env.GH_TOKEN         || '';
 const SENDER_NAME      = process.env.SENDER_NAME       || 'Dragon94';
+let   TRACKING_BASE    = process.env.TRACKING_URL      || '';
 
 // ── Multi-account SMTP ────────────────────────────────────────────────────
 const smtpAccounts = [];
@@ -134,6 +135,10 @@ function dbInit(SQL) {
   try { db.run(`ALTER TABLE sent ADD COLUMN sender TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE sent ADD COLUMN replied INTEGER DEFAULT 0`); } catch(e) {}
   try { db.run(`ALTER TABLE sent ADD COLUMN replied_at TEXT DEFAULT ''`); } catch(e) {}
+  try { db.run(`ALTER TABLE sent ADD COLUMN track_id TEXT DEFAULT ''`); } catch(e) {}
+  try { db.run(`ALTER TABLE sent ADD COLUMN viewed INTEGER DEFAULT 0`); } catch(e) {}
+  try { db.run(`ALTER TABLE sent ADD COLUMN viewed_at TEXT DEFAULT ''`); } catch(e) {}
+  try { db.run(`ALTER TABLE sent ADD COLUMN view_count INTEGER DEFAULT 0`); } catch(e) {}
   try { db.run(`ALTER TABLE emails ADD COLUMN telegram TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE emails ADD COLUMN phone TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE emails ADD COLUMN linkedin TEXT DEFAULT ''`); } catch(e) {}
@@ -252,6 +257,39 @@ function dbUnmarkReplied(email) {
   db.run("UPDATE sent SET replied=0, replied_at='' WHERE email=?", [email]);
   dbSave();
 }
+function generateTrackId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+function dbSetTrackId(email, trackId) {
+  db.run("UPDATE sent SET track_id=? WHERE email=? AND track_id=''", [trackId, email]);
+  dbSave();
+}
+function dbMarkViewed(trackId) {
+  const r = db.exec("SELECT viewed FROM sent WHERE track_id=?", [trackId]);
+  if (!r.length || !r[0].values.length) return false;
+  const now = new Date().toISOString();
+  if (r[0].values[0][0] === 0) {
+    db.run("UPDATE sent SET viewed=1, viewed_at=?, view_count=view_count+1 WHERE track_id=?", [now, trackId]);
+  } else {
+    db.run("UPDATE sent SET view_count=view_count+1 WHERE track_id=?", [trackId]);
+  }
+  dbSave();
+  return true;
+}
+function dbViewedCount() {
+  const r = db.exec("SELECT COUNT(*) FROM sent WHERE viewed=1");
+  return r.length ? r[0].values[0][0] : 0;
+}
+function bodyToHtml(text, trackId) {
+  const escaped = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  let pixel = '';
+  if (TRACKING_BASE && trackId) {
+    const url = TRACKING_BASE.replace(/\/$/,'') + '/track/' + trackId + '.png';
+    pixel = '<img src="' + url + '" width="1" height="1" style="display:none;width:1px;height:1px;border:0" alt="">';
+  }
+  return '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6">' + escaped + '</div>' + pixel;
+}
+const TRACKING_PIXEL = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7','base64');
 function dbCountryStats() {
   const r = db.exec(`SELECT e.country, COUNT(DISTINCT e.email) as collected,
     COUNT(DISTINCT s.email) as sent_count,
@@ -792,18 +830,22 @@ async function campaignTick() {
     const body = getCampaignBody().replace(/\{name\}/g, r.name ? r.name.split(' ')[0] : '');
     const senderDomain = acct.user.split('@')[1] || 'ravk.io';
     const msgId = '<' + Date.now() + '.' + Math.random().toString(36).slice(2,10) + idx + '@' + senderDomain + '>';
+    const trackId = generateTrackId();
     sendingNow = { email: r.email, name: r.name || r.login || r.email, via: acct.user };
 
+    const htmlBody = bodyToHtml(body, trackId);
     return acct.transporter.sendMail({
       from:      '"' + acct.name + '" <' + acct.user + '>',
       to:        r.email,
       replyTo:   acct.user,
       subject:   subject,
       messageId: msgId,
-      text:      body
+      text:      body,
+      html:      htmlBody
     }).then(() => {
       acct._consecutiveFails = 0;
       dbMarkSent(r.email, subject, body, 'campaign', 'sent', '', acct.user);
+      dbSetTrackId(r.email, trackId);
       lastSent = { email: r.email, name: r.name || r.login || r.email, at: new Date().toISOString(), via: acct.user };
       log('✓ Sent to ' + r.email + ' via ' + acct.user);
       return true;
@@ -1262,6 +1304,10 @@ function dashboardHTML() {
         <div class="stat-lbl">Unsent</div>
       </div>
       <div class="stat">
+        <div class="stat-val" id="stat-viewed" style="color:var(--blue)">0</div>
+        <div class="stat-lbl">Viewed</div>
+      </div>
+      <div class="stat">
         <div class="stat-val" id="stat-replied" style="color:var(--purple)">0</div>
         <div class="stat-lbl">Replied</div>
       </div>
@@ -1455,7 +1501,7 @@ function dashboardHTML() {
           <col style="width:13%"><col style="width:9%"><col style="width:5%">
         </colgroup>
         <thead>
-          <tr><th>User</th><th>Name</th><th>Email</th><th>Country</th><th>Type</th><th>Status</th><th>Sender</th><th>Subject</th><th>Preview</th><th>Sent At</th><th>Reply</th></tr>
+          <tr><th>User</th><th>Name</th><th>Email</th><th>Country</th><th>Type</th><th>Status</th><th>Sender</th><th>Subject</th><th>Preview</th><th>Sent At</th><th>Viewed</th><th>Reply</th></tr>
         </thead>
         <tbody id="sent-tbody">
           <tr><td colspan="11" style="text-align:center;color:var(--faint);padding:20px">Loading&hellip;</td></tr>
@@ -1804,7 +1850,9 @@ async function pollStatus(){
         chart.innerHTML=html;
       }
     }
-    // ── Replied stats ──
+    // ── Viewed & Replied stats ──
+    var svEl=document.getElementById('stat-viewed');
+    if(svEl)svEl.textContent=(d.viewed||0).toLocaleString();
     var srEl=document.getElementById('stat-replied');
     var rrEl=document.getElementById('stat-reply-rate');
     if(srEl)srEl.textContent=(d.replied||0).toLocaleString();
@@ -2324,14 +2372,18 @@ async function fetchSent(){
         +'<td style="font-size:.7rem;color:var(--muted)" title="'+(e.subject||'')+'">'+(e.subject||'&mdash;')+'</td>'
         +'<td style="font-size:.68rem;color:var(--muted)" title="'+bodyText.replace(/"/g,'&quot;').slice(0,200)+'">'+preview+'</td>'
         +'<td style="font-size:.66rem;color:var(--faint)">'+sentAt+'</td>'
+        +'<td style="text-align:center">'+(e.viewed
+          ?'<span style="font-size:.6rem;font-weight:700;padding:1px 6px;border-radius:99px;background:rgba(37,99,235,.1);color:var(--blue)" title="Viewed '+(e.viewed_at||'').replace('T',' ').slice(0,16)+(e.view_count>1?' ('+e.view_count+'x)':'')+'">&#128065; '+(e.view_count||1)+'</span>'
+          :'<span style="font-size:.6rem;color:var(--border)">&ndash;</span>')
+        +'</td>'
         +'<td style="text-align:center">'+(e.replied
           ?'<span class="reply-toggle replied" data-email="'+e.email.replace(/"/g,'&quot;')+'" data-replied="0" title="Click to unmark">&#10003; Yes</span>'
           :'<span class="reply-toggle unreplied" data-email="'+e.email.replace(/"/g,'&quot;')+'" data-replied="1" title="Mark as replied">&ndash;</span>')
         +'</td>'
         +'</tr>';
-    }).join(''):'<tr><td colspan="11" style="text-align:center;color:var(--faint);padding:20px">No sent emails yet</td></tr>';
+    }).join(''):'<tr><td colspan="12" style="text-align:center;color:var(--faint);padding:20px">No sent emails yet</td></tr>';
     sfoot.textContent=data.total>500?'Showing 500 of '+data.total.toLocaleString():'';
-  }catch(err){stbody.innerHTML='<tr><td colspan="11" style="color:var(--red);padding:16px">Error: '+err.message+'</td></tr>'}
+  }catch(err){stbody.innerHTML='<tr><td colspan="12" style="color:var(--red);padding:16px">Error: '+err.message+'</td></tr>'}
 }
 document.addEventListener('click',function(ev){
   var el=ev.target.closest('.reply-toggle');
@@ -2462,6 +2514,22 @@ function clearLogView(){
 function startDashboard(port = 3000) {
   const server = http.createServer((req, res) => {
 
+    // Auto-detect public URL from request host for tracking pixels
+    if (!TRACKING_BASE && req.headers.host && req.headers.host !== 'localhost:3000' && !req.headers.host.startsWith('127.')) {
+      const proto = req.headers['x-forwarded-proto'] || 'https';
+      TRACKING_BASE = proto + '://' + req.headers.host;
+      log('Tracking URL auto-detected: ' + TRACKING_BASE);
+    }
+
+    // ── GET /track/:id.png — tracking pixel ──────────────────────────────
+    if (req.method === 'GET' && req.url.startsWith('/track/')) {
+      const trackId = req.url.replace('/track/','').replace('.png','').split('?')[0];
+      if (trackId) dbMarkViewed(trackId);
+      res.writeHead(200, { 'Content-Type': 'image/gif', 'Cache-Control': 'no-store,no-cache,must-revalidate', 'Expires': '0' });
+      res.end(TRACKING_PIXEL);
+      return;
+    }
+
     // ── GET /api/stats ─────────────────────────────────────────────────────
     if (req.method === 'GET' && req.url === '/api/stats') {
       syncState();
@@ -2500,6 +2568,7 @@ function startDashboard(port = 3000) {
           enabled: a.enabled, configured: !!a.pass
         })),
         replied:         dbRepliedCount(),
+        viewed:          dbViewedCount(),
         countryStats:    dbCountryStats(),
         accountStats:    dbAccountStats(),
         hourlyDist:      dbHourlyDistribution(),
@@ -2648,15 +2717,19 @@ function startDashboard(port = 3000) {
           }
           const senderDomain = acct.user.split('@')[1] || 'ravk.io';
           const msgId = '<' + Date.now() + '.' + Math.random().toString(36).slice(2,10) + '@' + senderDomain + '>';
+          const trackId = generateTrackId();
+          const htmlBody = bodyToHtml(body, trackId);
           acct.transporter.sendMail({
             from:       '"' + acct.name + '" <' + acct.user + '>',
             to:         to,
             replyTo:    acct.user,
             subject:    subject,
             messageId:  msgId,
-            text:       body
+            text:       body,
+            html:       htmlBody
           }).then(info => {
             dbMarkSent(to, subject, body, 'test', 'sent', '', acct.user);
+            dbSetTrackId(to, trackId);
             log('✓ Test email sent to ' + to + ' via ' + acct.user);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true, msg: 'Sent to ' + to + ' via ' + acct.user }));
@@ -2692,7 +2765,7 @@ function startDashboard(port = 3000) {
       if (qs.get('country'))  like('e.country', qs.get('country'));
       if (qs.get('location')) like('e.location', qs.get('location'));
       const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-      const sql = 'SELECT s.email, s.sent_at, s.subject, s.body, s.send_type, s.status, s.error, s.sender, s.replied, s.replied_at, e.name, e.avatar, e.country, e.location, e.company, e.login, e.profile, e.followers, e.hireable, e.telegram '
+      const sql = 'SELECT s.email, s.sent_at, s.subject, s.body, s.send_type, s.status, s.error, s.sender, s.replied, s.replied_at, s.viewed, s.viewed_at, s.view_count, e.name, e.avatar, e.country, e.location, e.company, e.login, e.profile, e.followers, e.hireable, e.telegram '
         + 'FROM sent s LEFT JOIN emails e ON s.email=e.email ' + where
         + ' ORDER BY s.sent_at DESC LIMIT 500';
       let rows = [];
