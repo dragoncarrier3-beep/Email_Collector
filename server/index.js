@@ -75,8 +75,8 @@ let accountRotation = 0;
 const DAILY_LIMIT          = 10;            // max emails/day across ALL accounts
 const PER_ACCOUNT_DAILY    = 5;             // max emails/day per single account
 const PER_ACCOUNT_HOURLY   = 2;             // max emails/hour per single account
-const MIN_INTERVAL_MS      = 20 * 60000;    // minimum 20 min between any two sends
-const SEND_INTERVAL_MS     = Math.floor(24 * 60 * 60 * 1000 / DAILY_LIMIT); // ~144 min target
+const MIN_INTERVAL_MS      = 20 * 60000;    // minimum 20 min between batch sends
+const SEND_INTERVAL_MS     = MIN_INTERVAL_MS; // send a batch every 20 min
 const CONSECUTIVE_FAIL_MAX = 3;             // auto-disable account after 3 consecutive failures
 let nextSendAt = null;
 const GH_BATCH_SIZE    = 10;             // parallel profile fetches per batch
@@ -725,48 +725,39 @@ async function collectLoop() {
   collecting = false;
 }
 
-// ── Campaign: sends DAILY_LIMIT emails/day ────────────────────────────────
-let sendingNow  = null; // { email, name } while SMTP in flight
+// ── Campaign: sends DAILY_LIMIT emails/day — parallel across accounts ─────
+let sendingNow  = null; // { email, name, via } while SMTP in flight (shows last)
 let lastSent    = null; // { email, name, at } of most recent successful send
 async function campaignTick() {
-  // ── Safety check 1: global daily cap ──
   const todayCount = dbSentToday();
   if (todayCount >= DAILY_LIMIT) {
     log('Daily limit reached (' + DAILY_LIMIT + ' sent today) — resuming tomorrow.');
     return;
   }
 
-  // ── Safety check 2: minimum interval between any two sends ──
-  const lastTime = dbLastSendTime();
-  if (lastTime && (Date.now() - lastTime) < MIN_INTERVAL_MS) {
-    const waitMin = Math.ceil((MIN_INTERVAL_MS - (Date.now() - lastTime)) / 60000);
-    log('Too soon since last send — waiting ' + waitMin + ' more min (min interval: ' + Math.round(MIN_INTERVAL_MS/60000) + ' min).');
-    return;
-  }
-
-  // ── Safety check 3: pick an account that hasn't hit its limits ──
   const ready = getReadyAccounts();
   if (!ready.length) {
     log('No enabled & ready SMTP accounts — enable at least one on the dashboard.');
     return;
   }
-  let acct = null;
-  for (let i = 0; i < ready.length; i++) {
-    const candidate = ready[(accountRotation + i) % ready.length];
-    const acctToday = dbSentTodayByAccount(candidate.user);
-    const acctHour  = dbSentLastHourByAccount(candidate.user);
-    if (acctToday >= PER_ACCOUNT_DAILY) continue;
-    if (acctHour >= PER_ACCOUNT_HOURLY) continue;
-    acct = candidate;
-    accountRotation = (accountRotation + i + 1);
-    break;
+
+  // Find all accounts that haven't hit their limits
+  const available = [];
+  for (const acct of ready) {
+    if (dbSentTodayByAccount(acct.user) >= PER_ACCOUNT_DAILY) continue;
+    if (dbSentLastHourByAccount(acct.user) >= PER_ACCOUNT_HOURLY) continue;
+    available.push(acct);
   }
-  if (!acct) {
+  if (!available.length) {
     log('All accounts at their per-account limit (daily: ' + PER_ACCOUNT_DAILY + ', hourly: ' + PER_ACCOUNT_HOURLY + ') — waiting.');
     return;
   }
 
-  // ── Pick next unsent recipient ──
+  // How many can we send this tick without exceeding global daily cap
+  const slotsLeft = DAILY_LIMIT - todayCount;
+  const batchSize = Math.min(available.length, slotsLeft);
+
+  // Pick unsent recipients — one per account
   const sendTgts = getSendTargets();
   let pickSql = `SELECT * FROM emails
      WHERE email NOT LIKE '_no_email_%'
@@ -776,57 +767,65 @@ async function campaignTick() {
     pickSql += ' AND country IN (' + sendTgts.map(() => '?').join(',') + ')';
     pickParams.push(...sendTgts);
   }
-  pickSql += ' ORDER BY seen_at ASC LIMIT 1';
+  pickSql += ' ORDER BY seen_at ASC LIMIT ' + batchSize;
   const r2 = db.exec(pickSql, pickParams);
   if (!r2.length || !r2[0].values.length) {
     log('No unsent emails — waiting for collector to find more…');
     return;
   }
   const cols = r2[0].columns;
-  const row  = r2[0].values[0];
-  const r    = {};
-  cols.forEach((c, i) => r[c] = row[i]);
+  const recipients = r2[0].values.map(row => {
+    const obj = {};
+    cols.forEach((c, i) => obj[c] = row[i]);
+    return obj;
+  });
 
-  const total    = dbSentCount();
-  const subject  = getCampaignSubject();
-  const body     = getCampaignBody().replace(/\{name\}/g, r.name ? r.name.split(' ')[0] : '');
-  const senderDomain = acct.user.split('@')[1] || 'ravk.io';
+  const subject = getCampaignSubject();
+  const total   = dbSentCount();
 
-  sendingNow = { email: r.email, name: r.name || r.login || r.email, via: acct.user };
-  const msgId = '<' + Date.now() + '.' + Math.random().toString(36).slice(2,10) + '@' + senderDomain + '>';
-  try {
-    await acct.transporter.sendMail({
-      from:       '"' + acct.name + '" <' + acct.user + '>',
-      to:         r.email,
-      replyTo:    acct.user,
-      subject:    subject,
-      messageId:  msgId,
-      text:       body
-    });
-    acct._consecutiveFails = 0;
-    dbMarkSent(r.email, subject, body, 'campaign', 'sent', '', acct.user);
-    lastSent   = { email: r.email, name: r.name || r.login || r.email, at: new Date().toISOString(), via: acct.user };
-    sendingNow = null;
-    log('✓ Sent to ' + r.email + ' via ' + acct.user + ' — today: ' + (todayCount+1) + '/' + DAILY_LIMIT + ', total: ' + (total+1));
-  } catch(e) {
-    sendingNow = null;
-    acct._consecutiveFails = (acct._consecutiveFails || 0) + 1;
-    const isNetworkBlock = e.message.includes('ETIMEDOUT') || e.message.includes('ECONNREFUSED');
-    if (isNetworkBlock) {
+  log('⚡ Sending batch of ' + recipients.length + ' emails via ' + recipients.length + ' accounts…');
+
+  // Send in parallel — one email per account
+  const tasks = recipients.map((r, idx) => {
+    const acct = available[idx];
+    const body = getCampaignBody().replace(/\{name\}/g, r.name ? r.name.split(' ')[0] : '');
+    const senderDomain = acct.user.split('@')[1] || 'ravk.io';
+    const msgId = '<' + Date.now() + '.' + Math.random().toString(36).slice(2,10) + idx + '@' + senderDomain + '>';
+    sendingNow = { email: r.email, name: r.name || r.login || r.email, via: acct.user };
+
+    return acct.transporter.sendMail({
+      from:      '"' + acct.name + '" <' + acct.user + '>',
+      to:        r.email,
+      replyTo:   acct.user,
+      subject:   subject,
+      messageId: msgId,
+      text:      body
+    }).then(() => {
+      acct._consecutiveFails = 0;
+      dbMarkSent(r.email, subject, body, 'campaign', 'sent', '', acct.user);
+      lastSent = { email: r.email, name: r.name || r.login || r.email, at: new Date().toISOString(), via: acct.user };
+      log('✓ Sent to ' + r.email + ' via ' + acct.user);
+      return true;
+    }).catch(e => {
+      acct._consecutiveFails = (acct._consecutiveFails || 0) + 1;
       dbMarkFailed(r.email, e.message);
-      log('✗ SMTP blocked via ' + acct.user + ' (' + e.message + ') — will retry next tick');
-    } else {
-      dbMarkFailed(r.email, e.message);
-      dbMarkSent(r.email, subject, body, 'campaign', 'failed', e.message, acct.user);
+      if (!e.message.includes('ETIMEDOUT') && !e.message.includes('ECONNREFUSED')) {
+        dbMarkSent(r.email, subject, body, 'campaign', 'failed', e.message, acct.user);
+      }
       log('✗ Failed ' + r.email + ' via ' + acct.user + ': ' + e.message);
-    }
-    // ── Safety: auto-disable account after consecutive failures ──
-    if (acct._consecutiveFails >= CONSECUTIVE_FAIL_MAX) {
-      acct.enabled = false;
-      saveAccountStates();
-      log('⚠ Auto-disabled ' + acct.user + ' after ' + CONSECUTIVE_FAIL_MAX + ' consecutive failures — re-enable manually after checking.');
-    }
-  }
+      if (acct._consecutiveFails >= CONSECUTIVE_FAIL_MAX) {
+        acct.enabled = false;
+        saveAccountStates();
+        log('⚠ Auto-disabled ' + acct.user + ' after ' + CONSECUTIVE_FAIL_MAX + ' consecutive failures.');
+      }
+      return false;
+    });
+  });
+
+  const results = await Promise.all(tasks);
+  const sent = results.filter(Boolean).length;
+  sendingNow = null;
+  log('⚡ Batch done — ' + sent + '/' + recipients.length + ' sent, today: ' + dbSentToday() + '/' + DAILY_LIMIT + ', total: ' + (total + sent));
 }
 
 // ── Logger ─────────────────────────────────────────────────────────────────
