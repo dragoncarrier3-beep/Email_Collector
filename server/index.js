@@ -132,6 +132,8 @@ function dbInit(SQL) {
   try { db.run(`ALTER TABLE sent ADD COLUMN status TEXT DEFAULT 'sent'`); } catch(e) {}
   try { db.run(`ALTER TABLE sent ADD COLUMN error TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE sent ADD COLUMN sender TEXT DEFAULT ''`); } catch(e) {}
+  try { db.run(`ALTER TABLE sent ADD COLUMN replied INTEGER DEFAULT 0`); } catch(e) {}
+  try { db.run(`ALTER TABLE sent ADD COLUMN replied_at TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE emails ADD COLUMN telegram TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE emails ADD COLUMN phone TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE emails ADD COLUMN linkedin TEXT DEFAULT ''`); } catch(e) {}
@@ -237,6 +239,45 @@ function dbFailedToday() {
 function dbFailedTotal() {
   const r = db.exec('SELECT COUNT(*) FROM send_failures');
   return r.length ? r[0].values[0][0] : 0;
+}
+function dbRepliedCount() {
+  const r = db.exec("SELECT COUNT(*) FROM sent WHERE replied=1");
+  return r.length ? r[0].values[0][0] : 0;
+}
+function dbMarkReplied(email) {
+  db.run("UPDATE sent SET replied=1, replied_at=? WHERE email=?", [new Date().toISOString(), email]);
+  dbSave();
+}
+function dbUnmarkReplied(email) {
+  db.run("UPDATE sent SET replied=0, replied_at='' WHERE email=?", [email]);
+  dbSave();
+}
+function dbCountryStats() {
+  const r = db.exec(`SELECT e.country, COUNT(DISTINCT e.email) as collected,
+    COUNT(DISTINCT s.email) as sent_count,
+    SUM(CASE WHEN s.replied=1 THEN 1 ELSE 0 END) as replied_count
+    FROM emails e LEFT JOIN sent s ON e.email=s.email
+    WHERE e.email NOT LIKE '_no_email_%'
+    GROUP BY e.country ORDER BY collected DESC LIMIT 15`);
+  if (!r.length) return [];
+  return r[0].values.map(v => ({ country: v[0]||'Unknown', collected: v[1], sent: v[2], replied: v[3] }));
+}
+function dbAccountStats() {
+  const r = db.exec(`SELECT sender, COUNT(*) as total,
+    SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) as success,
+    SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed,
+    SUM(CASE WHEN replied=1 THEN 1 ELSE 0 END) as replied
+    FROM sent WHERE sender!='' GROUP BY sender`);
+  if (!r.length) return [];
+  return r[0].values.map(v => ({ sender: v[0], total: v[1], success: v[2], failed: v[3], replied: v[4] }));
+}
+function dbHourlyDistribution() {
+  const r = db.exec(`SELECT CAST(substr(sent_at,12,2) AS INTEGER) as hour, COUNT(*) as cnt
+    FROM sent WHERE status='sent' GROUP BY hour ORDER BY hour`);
+  if (!r.length) return [];
+  const hours = new Array(24).fill(0);
+  r[0].values.forEach(v => { hours[v[0]] = v[1]; });
+  return hours;
 }
 function dbDailyHistory(days) {
   const rows = [];
@@ -1008,6 +1049,8 @@ function dashboardHTML() {
   .log-line.ok{color:var(--green);font-weight:500}
   .log-line.err{color:var(--red);font-weight:600;background:var(--red-bg);padding:2px 6px;border-radius:4px;margin:1px 0}
 
+  .account-card{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);transition:var(--transition)}
+  .account-card:hover{box-shadow:var(--shadow)}
   .btn-action{background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);padding:7px 18px;font-size:.76rem;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:5px;transition:all .2s cubic-bezier(.4,0,.2,1);letter-spacing:.01em}
   .btn-action:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:0 3px 12px var(--accent-glow)}
   .btn-upload{background:var(--card-2);border:1px solid var(--border);color:var(--ink);border-radius:var(--radius-sm);padding:6px 16px;font-size:.76rem;font-weight:600;cursor:pointer;transition:var(--transition)}
@@ -1073,6 +1116,26 @@ function dashboardHTML() {
   .filter-bar select:focus,.filter-bar input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
 
   #send-toast{position:fixed;bottom:28px;right:28px;background:var(--green);color:#fff;padding:14px 24px;border-radius:12px;font-size:.8rem;font-weight:600;box-shadow:0 8px 32px rgba(0,0,0,.25);opacity:0;transform:translateY(20px) scale(.95);transition:opacity .3s ease,transform .3s cubic-bezier(.4,0,.2,1);pointer-events:none;z-index:9999;backdrop-filter:blur(8px)}
+
+  .country-bar-row{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:.72rem}
+  .country-bar-row:hover{background:var(--accent-bg);border-radius:6px}
+  .country-bar-name{width:90px;font-weight:600;color:var(--ink);text-align:right;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .country-bar-track{flex:1;height:18px;background:var(--bg-2);border-radius:4px;overflow:hidden;display:flex;position:relative}
+  .country-bar-fill{height:100%;border-radius:4px;transition:width .5s ease;position:relative}
+  .country-bar-vals{font-size:.62rem;font-weight:600;color:var(--faint);display:flex;gap:8px;width:120px;flex-shrink:0;justify-content:flex-end}
+  .acct-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:.72rem}
+  .acct-row:hover{background:var(--accent-bg);border-radius:6px}
+  .acct-bar-track{flex:1;height:16px;background:var(--bg-2);border-radius:4px;overflow:hidden;display:flex}
+  .acct-bar-seg{height:100%;transition:width .5s ease}
+  .hourly-bar{flex:1;border-radius:3px 3px 1px 1px;background:linear-gradient(180deg,var(--accent),rgba(8,145,178,.5));transition:height .5s ease;min-width:4px;position:relative;cursor:default}
+  .hourly-bar:hover{opacity:.8}
+  .hourly-bar:hover::after{content:attr(data-tip);position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-size:.55rem;font-weight:700;color:var(--ink);white-space:nowrap;background:var(--card);padding:1px 5px;border-radius:4px;box-shadow:var(--shadow-sm)}
+
+  .reply-toggle{cursor:pointer;padding:1px 6px;border-radius:99px;font-size:.6rem;font-weight:700;transition:var(--transition)}
+  .reply-toggle.replied{background:rgba(124,58,237,.12);color:var(--purple)}
+  .reply-toggle.replied:hover{background:rgba(124,58,237,.2)}
+  .reply-toggle.unreplied{color:var(--border)}
+  .reply-toggle.unreplied:hover{color:var(--purple)}
 
   .tpl-panel{padding:20px}
   .tpl-label{font-size:.68rem;font-weight:700;color:var(--faint);display:block;margin-bottom:5px;letter-spacing:.07em;text-transform:uppercase}
@@ -1200,6 +1263,14 @@ function dashboardHTML() {
         <div class="stat-lbl">Unsent</div>
       </div>
       <div class="stat">
+        <div class="stat-val" id="stat-replied" style="color:var(--purple)">0</div>
+        <div class="stat-lbl">Replied</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val" id="stat-reply-rate" style="color:var(--green);font-size:1.4rem">—</div>
+        <div class="stat-lbl">Reply Rate</div>
+      </div>
+      <div class="stat">
         <div class="stat-val">${DAILY_LIMIT}<span style="font-size:1rem;font-weight:600;color:var(--faint)">/day</span></div>
         <div class="stat-lbl">Daily Limit</div>
       </div>
@@ -1234,6 +1305,36 @@ function dashboardHTML() {
         <div class="daily-legend-item"><span class="daily-legend-dot" style="background:var(--green)"></span> Sent</div>
         <div class="daily-legend-item"><span class="daily-legend-dot" style="background:var(--red)"></span> Failed</div>
       </div>
+    </div>
+
+    <!-- Status Donut + Reply summary -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div class="daily-chart" style="margin-bottom:0">
+        <div class="daily-chart-title">&#128202; Email Status</div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:32px;padding:16px 0">
+          <canvas id="status-donut" width="140" height="140"></canvas>
+          <div id="status-legend" style="display:flex;flex-direction:column;gap:8px;font-size:.72rem;font-weight:600"></div>
+        </div>
+      </div>
+      <div class="daily-chart" style="margin-bottom:0">
+        <div class="daily-chart-title">&#9201; Hourly Distribution</div>
+        <div id="hourly-chart" style="display:flex;gap:2px;align-items:flex-end;height:100px;padding:12px 4px 0"></div>
+        <div style="display:flex;justify-content:space-between;font-size:.55rem;color:var(--faint);padding:4px 4px 0;font-weight:600">
+          <span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>23h</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top Countries -->
+    <div class="daily-chart" style="margin-bottom:20px">
+      <div class="daily-chart-title">&#127760; Top Countries</div>
+      <div id="country-stats" style="padding:8px 0"></div>
+    </div>
+
+    <!-- Account Performance -->
+    <div class="daily-chart" style="margin-bottom:20px">
+      <div class="daily-chart-title">&#128200; Account Performance</div>
+      <div id="account-stats" style="padding:8px 0"></div>
     </div>
 
     <!-- Sender Accounts -->
@@ -1350,15 +1451,15 @@ function dashboardHTML() {
       <div class="table-scroll">
       <table>
         <colgroup>
-          <col style="width:13%"><col style="width:8%"><col style="width:16%"><col style="width:7%">
-          <col style="width:5%"><col style="width:5%"><col style="width:12%"><col style="width:10%">
-          <col style="width:14%"><col style="width:10%">
+          <col style="width:12%"><col style="width:7%"><col style="width:14%"><col style="width:6%">
+          <col style="width:5%"><col style="width:4%"><col style="width:10%"><col style="width:9%">
+          <col style="width:13%"><col style="width:9%"><col style="width:5%">
         </colgroup>
         <thead>
-          <tr><th>User</th><th>Name</th><th>Email</th><th>Country</th><th>Type</th><th>Status</th><th>Sender</th><th>Subject</th><th>Preview</th><th>Sent At</th></tr>
+          <tr><th>User</th><th>Name</th><th>Email</th><th>Country</th><th>Type</th><th>Status</th><th>Sender</th><th>Subject</th><th>Preview</th><th>Sent At</th><th>Reply</th></tr>
         </thead>
         <tbody id="sent-tbody">
-          <tr><td colspan="10" style="text-align:center;color:var(--faint);padding:20px">Loading&hellip;</td></tr>
+          <tr><td colspan="11" style="text-align:center;color:var(--faint);padding:20px">Loading&hellip;</td></tr>
         </tbody>
       </table>
       </div>
@@ -1698,6 +1799,112 @@ async function pollStatus(){
         chart.innerHTML=html;
       }
     }
+    // ── Replied stats ──
+    var srEl=document.getElementById('stat-replied');
+    var rrEl=document.getElementById('stat-reply-rate');
+    if(srEl)srEl.textContent=(d.replied||0).toLocaleString();
+    if(rrEl){var rr=d.sent>0?((d.replied||0)/d.sent*100):0;rrEl.textContent=d.sent>0?rr.toFixed(1)+'%':'—';}
+    // ── Status donut chart ──
+    var donutCanvas=document.getElementById('status-donut');
+    if(donutCanvas&&donutCanvas.getContext){
+      var ctx=donutCanvas.getContext('2d');
+      var successCount=d.sent-(d.totalFailed||0);
+      var failCount=d.totalFailed||0;
+      var repCount=d.replied||0;
+      var total=successCount+failCount;
+      var slices=[
+        {val:successCount-repCount,color:'#059669',label:'Sent'},
+        {val:repCount,color:'#7c3aed',label:'Replied'},
+        {val:failCount,color:'#dc2626',label:'Failed'}
+      ];
+      ctx.clearRect(0,0,140,140);
+      var cx=70,cy=70,r=55,innerR=35,startAngle=-Math.PI/2;
+      if(total===0){
+        ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.arc(cx,cy,innerR,0,Math.PI*2,true);ctx.fillStyle='#e5e7eb';ctx.fill();
+      }else{
+        slices.forEach(function(s){
+          if(s.val<=0)return;
+          var angle=(s.val/total)*Math.PI*2;
+          ctx.beginPath();ctx.moveTo(cx+innerR*Math.cos(startAngle),cy+innerR*Math.sin(startAngle));
+          ctx.arc(cx,cy,r,startAngle,startAngle+angle);ctx.arc(cx,cy,innerR,startAngle+angle,startAngle,true);
+          ctx.closePath();ctx.fillStyle=s.color;ctx.fill();
+          startAngle+=angle;
+        });
+      }
+      ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--card').trim()||'#fff';
+      ctx.beginPath();ctx.arc(cx,cy,innerR-1,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--ink').trim()||'#111';
+      ctx.font='bold 18px Inter,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(total.toLocaleString(),cx,cy-6);
+      ctx.font='bold 9px Inter,sans-serif';
+      ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--faint').trim()||'#9ca3af';
+      ctx.fillText('TOTAL',cx,cy+10);
+      var legend=document.getElementById('status-legend');
+      if(legend)legend.innerHTML=slices.map(function(s){
+        return '<div style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:'+s.color+'"></span><span style="color:var(--muted)">'+s.label+'</span><span style="font-weight:800;color:var(--ink)">'+s.val+'</span></div>';
+      }).join('');
+    }
+    // ── Hourly distribution chart ──
+    if(d.hourlyDist){
+      var hEl=document.getElementById('hourly-chart');
+      if(hEl){
+        var maxH=Math.max.apply(null,d.hourlyDist)||1;
+        var hHtml='';
+        for(var hi=0;hi<24;hi++){
+          var hv=d.hourlyDist[hi]||0;
+          var hh=Math.max(2,Math.round((hv/maxH)*90));
+          hHtml+='<div class="hourly-bar" style="height:'+hh+'px" data-tip="'+hi+':00 — '+hv+'" title="'+hi+':00 — '+hv+' sent"></div>';
+        }
+        hEl.innerHTML=hHtml;
+      }
+    }
+    // ── Country stats ──
+    if(d.countryStats&&d.countryStats.length){
+      var csEl=document.getElementById('country-stats');
+      if(csEl){
+        var maxColl=Math.max.apply(null,d.countryStats.map(function(c){return c.collected}))||1;
+        var csHtml='';
+        d.countryStats.forEach(function(c){
+          var collW=Math.max(2,Math.round((c.collected/maxColl)*100));
+          var sentW=c.collected>0?Math.round((c.sent/c.collected)*100):0;
+          csHtml+='<div class="country-bar-row">';
+          csHtml+='<span class="country-bar-name">'+c.country+'</span>';
+          csHtml+='<div class="country-bar-track">';
+          csHtml+='<div class="country-bar-fill" style="width:'+collW+'%;background:var(--accent);opacity:.3" title="Collected: '+c.collected+'"></div>';
+          csHtml+='<div class="country-bar-fill" style="width:'+sentW+'%;background:var(--green);position:absolute" title="Sent: '+c.sent+'"></div>';
+          csHtml+='</div>';
+          csHtml+='<span class="country-bar-vals"><span style="color:var(--accent)">'+c.collected+'</span><span style="color:var(--green)">'+c.sent+'</span><span style="color:var(--purple)">'+(c.replied||0)+'</span></span>';
+          csHtml+='</div>';
+        });
+        csHtml+='<div style="display:flex;gap:14px;justify-content:flex-end;font-size:.58rem;font-weight:600;color:var(--faint);margin-top:6px;padding-right:4px"><span style="color:var(--accent)">&#9632; Collected</span><span style="color:var(--green)">&#9632; Sent</span><span style="color:var(--purple)">&#9632; Replied</span></div>';
+        csEl.innerHTML=csHtml;
+      }
+    }
+    // ── Account performance ──
+    if(d.accountStats&&d.accountStats.length){
+      var apEl=document.getElementById('account-stats');
+      if(apEl){
+        var apHtml='';
+        d.accountStats.forEach(function(a){
+          var total2=a.total||1;
+          var sW=Math.round((a.success/total2)*100);
+          var fW=Math.round((a.failed/total2)*100);
+          var rW=Math.round((a.replied/total2)*100);
+          var shortName=a.sender.split('@')[0];
+          apHtml+='<div class="acct-row">';
+          apHtml+='<span style="width:110px;font-weight:600;color:var(--ink);font-size:.68rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0" title="'+a.sender+'">'+shortName+'</span>';
+          apHtml+='<div class="acct-bar-track">';
+          if(sW>0)apHtml+='<div class="acct-bar-seg" style="width:'+sW+'%;background:var(--green)" title="Sent: '+a.success+'"></div>';
+          if(fW>0)apHtml+='<div class="acct-bar-seg" style="width:'+fW+'%;background:var(--red)" title="Failed: '+a.failed+'"></div>';
+          if(rW>0)apHtml+='<div class="acct-bar-seg" style="width:'+rW+'%;background:var(--purple)" title="Replied: '+a.replied+'"></div>';
+          apHtml+='</div>';
+          apHtml+='<span style="font-size:.62rem;font-weight:600;color:var(--faint);width:70px;text-align:right;flex-shrink:0">'+a.success+'/'+a.failed+'/'+a.replied+'</span>';
+          apHtml+='</div>';
+        });
+        apHtml+='<div style="display:flex;gap:14px;justify-content:flex-end;font-size:.58rem;font-weight:600;color:var(--faint);margin-top:6px"><span style="color:var(--green)">&#9632; Sent</span><span style="color:var(--red)">&#9632; Failed</span><span style="color:var(--purple)">&#9632; Replied</span></div>';
+        apEl.innerHTML=apHtml;
+      }
+    }
     if(d.accounts){
       var list=document.getElementById('accounts-list');
       var sel=document.getElementById('test-email-from');
@@ -1707,7 +1914,7 @@ async function pollStatus(){
           var statusText=!a.configured?'No Password':a.ready?'Ready':'Error';
           var toggleChecked=a.enabled?'checked':'';
           var toggleDisabled=!a.ready?'disabled':'';
-          return '<div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);transition:var(--transition)" onmouseenter="this.style.boxShadow=\'var(--shadow)\'" onmouseleave="this.style.boxShadow=\'var(--shadow-sm)\'">'
+          return '<div class="account-card">'
             +'<div style="width:10px;height:10px;border-radius:50%;background:'+statusColor+';box-shadow:0 0 6px '+statusColor+';flex-shrink:0"></div>'
             +'<div style="flex:1;min-width:0">'
             +'<div style="font-size:.82rem;font-weight:700;color:var(--ink)">'+a.user+'</div>'
@@ -2104,11 +2311,26 @@ async function fetchSent(){
         +'<td style="font-size:.7rem;color:var(--muted)" title="'+(e.subject||'')+'">'+(e.subject||'&mdash;')+'</td>'
         +'<td style="font-size:.68rem;color:var(--muted)" title="'+bodyText.replace(/"/g,'&quot;').slice(0,200)+'">'+preview+'</td>'
         +'<td style="font-size:.66rem;color:var(--faint)">'+sentAt+'</td>'
+        +'<td style="text-align:center">'+(e.replied
+          ?'<span class="reply-toggle replied" data-email="'+e.email.replace(/"/g,'&quot;')+'" data-replied="0" title="Click to unmark">&#10003; Yes</span>'
+          :'<span class="reply-toggle unreplied" data-email="'+e.email.replace(/"/g,'&quot;')+'" data-replied="1" title="Mark as replied">&ndash;</span>')
+        +'</td>'
         +'</tr>';
-    }).join(''):'<tr><td colspan="10" style="text-align:center;color:var(--faint);padding:20px">No sent emails yet</td></tr>';
+    }).join(''):'<tr><td colspan="11" style="text-align:center;color:var(--faint);padding:20px">No sent emails yet</td></tr>';
     sfoot.textContent=data.total>500?'Showing 500 of '+data.total.toLocaleString():'';
-  }catch(err){stbody.innerHTML='<tr><td colspan="10" style="color:var(--red);padding:16px">Error: '+err.message+'</td></tr>'}
+  }catch(err){stbody.innerHTML='<tr><td colspan="11" style="color:var(--red);padding:16px">Error: '+err.message+'</td></tr>'}
 }
+document.addEventListener('click',function(ev){
+  var el=ev.target.closest('.reply-toggle');
+  if(!el)return;
+  var email=el.getAttribute('data-email');
+  var replied=el.getAttribute('data-replied')==='1';
+  el.textContent='…';
+  fetch('/api/mark-replied',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,replied:replied})})
+    .then(function(r){return r.json()})
+    .then(function(d){if(d.ok){showToast(d.msg);fetchSent();pollStatus();}})
+    .catch(function(){});
+});
 ['sf-email','sf-name','sf-country','sf-location'].forEach(function(id){
   var el=document.getElementById(id);
   if(el)el.addEventListener('input',function(){clearTimeout(sentTimer);sentTimer=setTimeout(fetchSent,350)});
@@ -2264,6 +2486,10 @@ function startDashboard(port = 3000) {
           ready: a.status.ready, error: a.status.error, checked: a.status.checkedAt,
           enabled: a.enabled, configured: !!a.pass
         })),
+        replied:         dbRepliedCount(),
+        countryStats:    dbCountryStats(),
+        accountStats:    dbAccountStats(),
+        hourlyDist:      dbHourlyDistribution(),
         logs:            logBuffer.slice(0, 100),
         uptime:          Date.now() - SERVER_START_TIME
       }));
@@ -2322,6 +2548,31 @@ function startDashboard(port = 3000) {
           log('Send targets set → ' + (sel.length ? sel.join(', ') : 'ALL countries'));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, msg: sel.length ? 'Send targets: ' + sel.join(', ') : 'Sending to ALL countries' }));
+        } catch(e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, msg: 'Invalid request.' }));
+        }
+      });
+      return;
+    }
+
+    // ── POST /api/mark-replied ──────────────────────────────────────────
+    if (req.method === 'POST' && req.url === '/api/mark-replied') {
+      let raw = '';
+      req.on('data', d => raw += d);
+      req.on('end', () => {
+        try {
+          const { email, replied } = JSON.parse(raw);
+          if (!email) throw new Error('No email');
+          if (replied) {
+            dbMarkReplied(email);
+            log('Marked replied: ' + email);
+          } else {
+            dbUnmarkReplied(email);
+            log('Unmarked replied: ' + email);
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, msg: replied ? 'Marked as replied' : 'Unmarked' }));
         } catch(e) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, msg: 'Invalid request.' }));
@@ -2428,7 +2679,7 @@ function startDashboard(port = 3000) {
       if (qs.get('country'))  like('e.country', qs.get('country'));
       if (qs.get('location')) like('e.location', qs.get('location'));
       const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-      const sql = 'SELECT s.email, s.sent_at, s.subject, s.body, s.send_type, s.status, s.error, s.sender, e.name, e.avatar, e.country, e.location, e.company, e.login, e.profile, e.followers, e.hireable, e.telegram '
+      const sql = 'SELECT s.email, s.sent_at, s.subject, s.body, s.send_type, s.status, s.error, s.sender, s.replied, s.replied_at, e.name, e.avatar, e.country, e.location, e.company, e.login, e.profile, e.followers, e.hireable, e.telegram '
         + 'FROM sent s LEFT JOIN emails e ON s.email=e.email ' + where
         + ' ORDER BY s.sent_at DESC LIMIT 500';
       let rows = [];
