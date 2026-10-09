@@ -72,9 +72,9 @@ function getReadyAccounts() {
 }
 let accountRotation = 0;
 // ── Safety limits (warm-up phase 1: weeks 1–2) ───────────────────────────
-const DAILY_LIMIT          = 10;            // max emails/day across ALL accounts
 const PER_ACCOUNT_DAILY    = 5;             // max emails/day per single account
 const PER_ACCOUNT_HOURLY   = 2;             // max emails/hour per single account
+function getDailyLimit() { return Math.max(1, getReadyAccounts().length) * PER_ACCOUNT_DAILY; }
 const MIN_INTERVAL_MS      = 20 * 60000;    // minimum 20 min between batch sends
 const SEND_INTERVAL_MS     = MIN_INTERVAL_MS; // send a batch every 20 min
 const CONSECUTIVE_FAIL_MAX = 3;             // auto-disable account after 3 consecutive failures
@@ -730,6 +730,7 @@ let sendingNow  = null; // { email, name, via } while SMTP in flight (shows last
 let lastSent    = null; // { email, name, at } of most recent successful send
 async function campaignTick() {
   const todayCount = dbSentToday();
+  const DAILY_LIMIT = getDailyLimit();
   if (todayCount >= DAILY_LIMIT) {
     log('Daily limit reached (' + DAILY_LIMIT + ' sent today) — resuming tomorrow.');
     return;
@@ -1269,7 +1270,7 @@ function dashboardHTML() {
         <div class="stat-lbl">Reply Rate</div>
       </div>
       <div class="stat">
-        <div class="stat-val">${DAILY_LIMIT}<span style="font-size:1rem;font-weight:600;color:var(--faint)">/day</span></div>
+        <div class="stat-val">${getDailyLimit()}<span style="font-size:1rem;font-weight:600;color:var(--faint)">/day</span></div>
         <div class="stat-lbl">Daily Limit</div>
       </div>
       <div class="stat">
@@ -1563,7 +1564,7 @@ function dashboardHTML() {
     <div class="panel" style="padding:16px;margin-bottom:24px">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
         <div style="background:var(--bg-3);border-radius:var(--radius-sm);padding:12px;text-align:center">
-          <div style="font-size:1.3rem;font-weight:700;color:var(--accent)">${DAILY_LIMIT}</div>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--accent)">${getDailyLimit()}</div>
           <div style="font-size:.72rem;color:var(--muted);margin-top:2px">Max emails/day (global)</div>
         </div>
         <div style="background:var(--bg-3);border-radius:var(--radius-sm);padding:12px;text-align:center">
@@ -2489,7 +2490,7 @@ function startDashboard(port = 3000) {
         sendingNow:      sendingNow,
         lastSent:        lastSent,
         nextSendAt:      nextSendAt ? new Date(nextSendAt).toISOString() : null,
-        dailyLimit:      DAILY_LIMIT,
+        dailyLimit:      getDailyLimit(),
         perAccountDaily: PER_ACCOUNT_DAILY,
         perAccountHourly:PER_ACCOUNT_HOURLY,
         minIntervalMin:  Math.round(MIN_INTERVAL_MS / 60000),
@@ -2870,7 +2871,7 @@ function startDashboard(port = 3000) {
         }
       } else if (action === 'campaign-start') {
         startCampaign();
-        msg = campaignRunning ? 'Campaign started — max ' + DAILY_LIMIT + '/day, ' + PER_ACCOUNT_DAILY + '/acct/day, min ' + Math.round(MIN_INTERVAL_MS/60000) + ' min between sends.' : 'Campaign already running.';
+        msg = campaignRunning ? 'Campaign started — max ' + getDailyLimit() + '/day, ' + PER_ACCOUNT_DAILY + '/acct/day, min ' + Math.round(MIN_INTERVAL_MS/60000) + ' min between sends.' : 'Campaign already running.';
       } else if (action === 'stop-all') {
         collecting = false;
         stopCampaign();
@@ -2932,7 +2933,7 @@ function scheduleNextSend() {
 function startCampaign() {
   if (campaignRunning) { log('Campaign already running.'); return; }
   campaignRunning = true;
-  log('Campaign STARTED — max ' + DAILY_LIMIT + '/day global, ' + PER_ACCOUNT_DAILY + '/day per account, ' + PER_ACCOUNT_HOURLY + '/hr per account, min ' + Math.round(MIN_INTERVAL_MS/60000) + ' min gap');
+  log('Campaign STARTED — max ' + getDailyLimit() + '/day global, ' + PER_ACCOUNT_DAILY + '/day per account, ' + PER_ACCOUNT_HOURLY + '/hr per account, min ' + Math.round(MIN_INTERVAL_MS/60000) + ' min gap');
   campaignTick();
   scheduleNextSend();
 }
@@ -2972,7 +2973,7 @@ async function main() {
   syncState();
   log('Realman server starting…');
   log('DB: ' + dbRealCount() + ' emails | ' + dbSentCount() + ' sent');
-  log('Campaign: ' + DAILY_LIMIT + '/day global · ' + PER_ACCOUNT_DAILY + '/day per-acct · ' + PER_ACCOUNT_HOURLY + '/hr per-acct · min ' + Math.round(MIN_INTERVAL_MS/60000) + ' min gap · auto-disable after ' + CONSECUTIVE_FAIL_MAX + ' fails');
+  log('Campaign: ' + getDailyLimit() + '/day global · ' + PER_ACCOUNT_DAILY + '/day per-acct · ' + PER_ACCOUNT_HOURLY + '/hr per-acct · min ' + Math.round(MIN_INTERVAL_MS/60000) + ' min gap · auto-disable after ' + CONSECUTIVE_FAIL_MAX + ' fails');
   log(smtpAccounts.length + ' SMTP account(s) configured');
 
   initTransporters();
