@@ -1642,6 +1642,12 @@ function dashboardHTML() {
   </div>
 </footer>
 <script>
+window.onerror=function(msg,url,line,col,err){
+  var d=document.createElement('div');
+  d.style.cssText='position:fixed;top:0;left:0;right:0;z-index:99999;background:red;color:white;padding:12px;font-size:14px;font-family:monospace;white-space:pre-wrap';
+  d.textContent='JS ERROR: '+msg+' (line '+line+', col '+col+')';
+  document.body.appendChild(d);
+};
 // ── Theme ────────────────────────────────────────────────────────────────
 (function(){
   function applyTheme(t){
@@ -2021,17 +2027,25 @@ async function ctrlAction(action){
 // ── Main Navigation ──────────────────────────────────────────────────────
 var currentNav='dashboard';
 function switchNav(nav){
-  currentNav=nav;
-  document.querySelectorAll('.nav-page').forEach(function(p){p.style.display='none'});
-  document.getElementById('nav-'+nav).style.display='';
-  document.querySelectorAll('.nav-btn').forEach(function(b){b.classList.remove('active')});
-  document.querySelector('[data-nav="'+nav+'"]').classList.add('active');
-  if(nav==='collected')fetchEmails();
-  if(nav==='sent')fetchSent();
-  if(nav==='targets')loadTargets();
-  if(nav==='test')loadTestDefaults();
-  if(nav==='logs')fetchLogs();
-  try{localStorage.setItem('rm-nav',nav)}catch(e){}
+  try{
+    currentNav=nav;
+    var pages=document.querySelectorAll('.nav-page');
+    for(var i=0;i<pages.length;i++)pages[i].style.display='none';
+    var target=document.getElementById('nav-'+nav);
+    if(target)target.style.display='block';
+    var btns=document.querySelectorAll('.nav-btn');
+    for(var j=0;j<btns.length;j++)btns[j].classList.remove('active');
+    var activeBtn=document.querySelector('[data-nav="'+nav+'"]');
+    if(activeBtn)activeBtn.classList.add('active');
+    if(nav==='collected')fetchEmails();
+    if(nav==='sent')fetchSent();
+    if(nav==='targets')loadTargets();
+    if(nav==='test')loadTestDefaults();
+    if(nav==='logs')fetchLogs();
+    try{localStorage.setItem('rm-nav',nav)}catch(e2){}
+  }catch(err){
+    document.title='NAV ERROR: '+err.message;
+  }
 }
 (function(){try{var n=localStorage.getItem('rm-nav');if(n&&document.getElementById('nav-'+n))switchNav(n)}catch(e){}})();
 
