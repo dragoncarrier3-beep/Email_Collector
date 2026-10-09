@@ -981,9 +981,10 @@ function dashboardHTML() {
   .progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),#06b6d4);border-radius:99px;transition:width .6s cubic-bezier(.4,0,.2,1);position:relative}
   .progress-fill::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.2),transparent);background-size:200% 100%;animation:shimmer 2s infinite linear}
 
-  table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:.77rem}
+  table{width:100%;border-collapse:collapse;font-size:.77rem}
+  .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
   th{padding:9px 10px;text-align:left;font-size:.62rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);white-space:nowrap;border-bottom:1px solid var(--border);background:var(--card-2)}
-  td{padding:9px 10px;border-bottom:1px solid var(--border-2);color:var(--ink-2);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .1s}
+  td{padding:9px 10px;border-bottom:1px solid var(--border-2);color:var(--ink-2);vertical-align:middle;white-space:nowrap;transition:background .1s}
   tr:last-child td{border:none}
   tr:hover td{background:var(--accent-bg)}
   .filter-row td{padding:4px 6px;background:var(--card-2);border-bottom:1px solid var(--border)}
@@ -1118,6 +1119,18 @@ function dashboardHTML() {
       <span class="nav-icon">&#10004;</span><span class="nav-label">Sent</span><span class="nav-count" id="sent-count">0</span>
     </button>
     <div class="nav-sep"></div>
+    <button class="nav-btn" data-nav="targets" onclick="switchNav('targets')">
+      <span class="nav-icon">&#127758;</span><span class="nav-label">Targets</span>
+    </button>
+    <div class="nav-sep"></div>
+    <button class="nav-btn" data-nav="test" onclick="switchNav('test')">
+      <span class="nav-icon">&#9993;</span><span class="nav-label">Test Email</span>
+    </button>
+    <div class="nav-sep"></div>
+    <button class="nav-btn" data-nav="logs" onclick="switchNav('logs')">
+      <span class="nav-icon">&#9998;</span><span class="nav-label">Logs</span>
+    </button>
+    <div class="nav-sep"></div>
     <button class="nav-btn" data-nav="settings" onclick="switchNav('settings')">
       <span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span>
     </button>
@@ -1222,47 +1235,6 @@ function dashboardHTML() {
     </div>
     <div id="accounts-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px"></div>
 
-    <!-- Send Test Email -->
-    <div class="sec-hdr" style="margin-bottom:10px">
-      <span class="sec-title">Send Test Email</span>
-    </div>
-    <div class="panel" style="padding:16px;margin-bottom:20px">
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <input id="test-email-to" type="email" placeholder="Recipient email" style="flex:1;min-width:180px;padding:7px 12px;font-size:.78rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);outline:none" />
-          <select id="test-email-from" style="padding:7px 12px;font-size:.78rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink)"></select>
-        </div>
-        <input id="test-email-subject" type="text" placeholder="Subject" style="width:100%;padding:7px 12px;font-size:.78rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);outline:none" />
-        <textarea id="test-email-body" rows="5" placeholder="Message body" style="width:100%;padding:7px 12px;font-size:.78rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);outline:none;resize:vertical;font-family:inherit;line-height:1.5"></textarea>
-        <div style="display:flex;align-items:center;gap:8px">
-          <button class="btn-action" onclick="sendTestEmail()" id="test-email-btn" style="font-size:.72rem;padding:5px 16px;white-space:nowrap">&#9993; Send Test</button>
-          <span id="test-email-msg" style="font-size:.72rem;color:var(--muted);display:none"></span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Target Countries (on Dashboard for quick access) -->
-    <div class="sec-hdr" style="margin-bottom:10px">
-      <span class="sec-title">Collection Targets</span>
-      <button id="target-save-btn" class="btn-action" onclick="saveTargets()" style="font-size:.72rem;padding:4px 14px">Save Targets</button>
-    </div>
-    <div class="target-panel" id="target-panel">
-      <div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">Select countries or regions, then click <b>Save Targets</b> before collecting.</div>
-      <div id="target-regions"></div>
-      <span id="target-msg" style="font-size:.78rem;color:var(--muted);margin-top:8px;display:block"></span>
-    </div>
-
-    <!-- Send Targets -->
-    <div class="sec-hdr" style="margin-bottom:10px">
-      <span class="sec-title">Send Targets</span>
-      <button id="send-target-save-btn" class="btn-action" onclick="saveSendTargets()" style="font-size:.72rem;padding:4px 14px">Save Send Targets</button>
-    </div>
-    <div class="target-panel" id="send-target-panel">
-      <div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">Select countries to <b>send emails to</b>. If none selected, sends to all collected emails.</div>
-      <div id="send-target-regions"></div>
-      <span id="send-target-msg" style="font-size:.78rem;color:var(--muted);margin-top:8px;display:block"></span>
-    </div>
-
     <span id="ctrl-msg" style="font-size:.8rem;color:var(--muted);display:block;margin-bottom:8px"></span>
     <!-- Status row -->
     <div class="status-row">
@@ -1289,16 +1261,6 @@ function dashboardHTML() {
       <div id="cp-detail" style="font-size:.68rem;color:var(--faint);margin-top:5px;font-weight:500"></div>
     </div>
 
-    <!-- Live Log -->
-    <div class="sec-hdr" style="margin-top:16px">
-      <span class="sec-title">Live Log</span>
-      <span style="color:var(--faint);font-size:.7rem">Updated ${nowStr}</span>
-    </div>
-    <div class="log-wrap">
-      <div class="log-scroll">
-        ${logHTML || '<div class="log-line" style="color:var(--faint)">Waiting for activity&hellip;</div>'}
-      </div>
-    </div>
   </div>
 
   <!-- ════════════ COLLECTED TAB ════════════ -->
@@ -1323,25 +1285,8 @@ function dashboardHTML() {
       <input id="filter-telegram" placeholder="telegram&hellip;" style="width:100px">
       <span style="font-size:.68rem;color:var(--faint);margin-left:auto" id="filter-summary"></span>
     </div>
-    <div style="overflow-x:auto">
-      <table id="email-table">
-        <colgroup>
-          <col style="width:10%">
-          <col style="width:8%">
-          <col style="width:14%">
-          <col style="width:7%">
-          <col style="width:7%">
-          <col style="width:7%">
-          <col style="width:4%">
-          <col style="width:4%">
-          <col style="width:3%">
-          <col style="width:3%">
-          <col style="width:8%">
-          <col style="width:7%">
-          <col style="width:8%">
-          <col style="width:7%">
-          <col style="width:3%">
-        </colgroup>
+    <div class="table-scroll">
+      <table id="email-table" style="min-width:1200px">
         <thead>
           <tr>
             <th>User</th><th>Name</th><th>Email</th><th>Location</th><th>Country</th><th>Company</th><th>Flwrs</th><th>Repos</th><th>Hire</th><th>Sent</th><th>Telegram</th><th>Phone</th><th>LinkedIn</th><th>Seen</th><th>DL</th>
@@ -1391,11 +1336,8 @@ function dashboardHTML() {
         <input id="sf-country" placeholder="country&hellip;" style="flex:1">
         <input id="sf-location" placeholder="location&hellip;" style="flex:1">
       </div>
-      <div style="overflow-x:auto">
-      <table>
-        <colgroup>
-          <col style="width:10%"><col style="width:8%"><col style="width:13%"><col style="width:5%"><col style="width:5%"><col style="width:5%"><col style="width:12%"><col style="width:9%"><col style="width:14%"><col style="width:9%"><col style="width:10%">
-        </colgroup>
+      <div class="table-scroll">
+      <table style="min-width:1100px">
         <thead>
           <tr><th>User</th><th>Name</th><th>Email</th><th>Country</th><th>Type</th><th>Status</th><th>Sender</th><th>Subject</th><th>Message Preview</th><th>Sent At</th><th>Telegram</th></tr>
         </thead>
@@ -1405,6 +1347,84 @@ function dashboardHTML() {
       </table>
       </div>
       <div id="sent-footer" style="padding:10px 16px;font-size:.75rem;color:var(--faint)"></div>
+    </div>
+  </div>
+
+  <!-- ════════════ TARGETS TAB ════════════ -->
+  <div id="nav-targets" class="nav-page" style="display:none">
+    <div class="sec-hdr" style="margin-bottom:10px">
+      <span class="sec-title">Collection Targets</span>
+      <button id="target-save-btn" class="btn-action" onclick="saveTargets()" style="font-size:.72rem;padding:4px 14px">Save Targets</button>
+    </div>
+    <div class="target-panel" id="target-panel">
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">Select countries or regions, then click <b>Save Targets</b> before collecting.</div>
+      <div id="target-regions"></div>
+      <span id="target-msg" style="font-size:.78rem;color:var(--muted);margin-top:8px;display:block"></span>
+    </div>
+
+    <div style="margin-top:28px"></div>
+
+    <div class="sec-hdr" style="margin-bottom:10px">
+      <span class="sec-title">Send Targets</span>
+      <button id="send-target-save-btn" class="btn-action" onclick="saveSendTargets()" style="font-size:.72rem;padding:4px 14px">Save Send Targets</button>
+    </div>
+    <div class="target-panel" id="send-target-panel">
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">Select countries to <b>send emails to</b>. If none selected, sends to all collected emails.</div>
+      <div id="send-target-regions"></div>
+      <span id="send-target-msg" style="font-size:.78rem;color:var(--muted);margin-top:8px;display:block"></span>
+    </div>
+  </div>
+
+  <!-- ════════════ TEST EMAIL TAB ════════════ -->
+  <div id="nav-test" class="nav-page" style="display:none">
+    <div class="sec-hdr" style="margin-bottom:12px">
+      <span class="sec-title">Send Test Email</span>
+    </div>
+    <div class="panel" style="padding:20px;margin-bottom:24px;max-width:700px">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div>
+          <label style="font-size:.72rem;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Recipient</label>
+          <input id="test-email-to" type="email" placeholder="Recipient email address" style="width:100%;padding:9px 14px;font-size:.82rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);outline:none" />
+        </div>
+        <div>
+          <label style="font-size:.72rem;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Send From</label>
+          <select id="test-email-from" style="width:100%;padding:9px 14px;font-size:.82rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink)"></select>
+        </div>
+        <div>
+          <label style="font-size:.72rem;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Subject</label>
+          <input id="test-email-subject" type="text" placeholder="Email subject" style="width:100%;padding:9px 14px;font-size:.82rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);outline:none" />
+        </div>
+        <div>
+          <label style="font-size:.72rem;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Message Body</label>
+          <textarea id="test-email-body" rows="8" placeholder="Type your message here..." style="width:100%;padding:9px 14px;font-size:.82rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);outline:none;resize:vertical;font-family:inherit;line-height:1.6"></textarea>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+          <button class="btn-action accent" onclick="sendTestEmail()" id="test-email-btn" style="font-size:.8rem;padding:8px 24px">&#9993; Send Test</button>
+          <span id="test-email-msg" style="font-size:.78rem;color:var(--muted);display:none"></span>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="padding:16px;max-width:700px">
+      <p style="font-size:.75rem;color:var(--muted);margin:0">
+        Test emails are recorded in Sent History with type <b>Test</b>. They do not count toward daily campaign limits but recipients who receive a test will not get a campaign email (no duplicates).
+      </p>
+    </div>
+  </div>
+
+  <!-- ════════════ LOGS TAB ════════════ -->
+  <div id="nav-logs" class="nav-page" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <span class="sec-title">Live Log</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="log-updated" style="color:var(--faint);font-size:.7rem"></span>
+        <button class="btn-action" onclick="fetchLogs()" style="font-size:.72rem;padding:4px 12px">&#8635; Refresh</button>
+        <button class="btn-action" onclick="clearLogView()" style="font-size:.72rem;padding:4px 12px">Clear View</button>
+      </div>
+    </div>
+    <div class="log-wrap" style="margin-bottom:24px">
+      <div class="log-scroll" id="log-container" style="max-height:calc(100vh - 200px)">
+        <div class="log-line" style="color:var(--faint)">Loading&hellip;</div>
+      </div>
     </div>
   </div>
 
@@ -1542,6 +1562,13 @@ async function pollStatus(){
       statVals[1].textContent=d.sent.toLocaleString();
       statVals[2].textContent=d.daily;
       statVals[3].textContent=d.unsent.toLocaleString();
+    }
+    // ── Update logs tab if active ──
+    if(currentNav==='logs'&&d.logs){
+      var lc=document.getElementById('log-container');
+      var lu=document.getElementById('log-updated');
+      if(lc)lc.innerHTML=d.logs.map(logLineHTML).join('');
+      if(lu)lu.textContent='Updated '+new Date().toLocaleString();
     }
     // ── Collect progress banner ──
     var cbEl=document.getElementById('collect-banner');
@@ -1714,13 +1741,14 @@ async function sendTestEmail(){
   }catch(e){msg.style.color='var(--red)';msg.textContent='Error: '+e.message}
   btn.disabled=false;btn.textContent='\\u2709 Send Test';
 }
-(async function prefillTestEmail(){
+async function loadTestDefaults(){
   try{var r=await fetch('/api/template');var d=await r.json();
     var s=document.getElementById('test-email-subject');var b=document.getElementById('test-email-body');
     if(s&&!s.value)s.value=d.subject||'';
     if(b&&!b.value)b.value=d.body||'';
   }catch(e){}
-})();
+}
+loadTestDefaults();
 schedulePoll(3000);pollStatus();loadTargets();
 
 // ── Control buttons ──────────────────────────────────────────────────────
@@ -1750,7 +1778,9 @@ function switchNav(nav){
   document.querySelector('[data-nav="'+nav+'"]').classList.add('active');
   if(nav==='collected')fetchEmails();
   if(nav==='sent')fetchSent();
-  if(nav==='dashboard')loadTargets();
+  if(nav==='targets')loadTargets();
+  if(nav==='test')loadTestDefaults();
+  if(nav==='logs')fetchLogs();
   try{localStorage.setItem('rm-nav',nav)}catch(e){}
 }
 (function(){try{var n=localStorage.getItem('rm-nav');if(n&&document.getElementById('nav-'+n))switchNav(n)}catch(e){}})();
@@ -2020,9 +2050,9 @@ async function fetchSent(){
         +'<td><span style="font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:99px;letter-spacing:.03em;'
           +(e.status==='failed'?'background:rgba(220,38,38,.1);color:var(--red)':'background:rgba(5,150,105,.1);color:var(--green)')
           +'" title="'+(e.error||'')+'">'+(e.status==='failed'?'\\u2717 Failed':'\\u2713 Sent')+'</span></td>'
-        +'<td style="font-size:.68rem;color:var(--muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(e.sender||'&mdash;')+'</td>'
+        +'<td style="font-size:.68rem;color:var(--muted)">'+(e.sender||'&mdash;')+'</td>'
         +'<td style="font-size:.75rem;color:var(--muted)">'+(e.subject||'&mdash;')+'</td>'
-        +'<td style="font-size:.72rem;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+preview+'</td>'
+        +'<td style="font-size:.72rem;color:var(--muted)">'+preview+'</td>'
         +'<td style="font-size:.72rem;color:var(--green);white-space:nowrap">'+sentAt+'</td>'
         +'<td>'+tgCell+'</td>'
         +'</tr>';
@@ -2107,6 +2137,32 @@ async function saveTemplate(){
   }catch(e){msg.style.color='var(--red)';msg.textContent='Error: '+e.message}
 }
 loadTemplate();
+
+// ── Logs tab ──────────────────────────────────────────────────────────────
+function logLineHTML(l){
+  var cls='';
+  if(/✓|OK|STARTED|auth OK/.test(l))cls='ok';
+  if(/✗|ERROR|failed|⚠|blocked/.test(l))cls='err';
+  return '<div class="log-line '+cls+'">'+l.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</div>';
+}
+async function fetchLogs(){
+  try{
+    var r=await fetch('/api/stats');var d=await r.json();
+    var container=document.getElementById('log-container');
+    var updated=document.getElementById('log-updated');
+    if(!container)return;
+    if(d.logs&&d.logs.length){
+      container.innerHTML=d.logs.map(logLineHTML).join('');
+    }else{
+      container.innerHTML='<div class="log-line" style="color:var(--faint)">No log entries yet.</div>';
+    }
+    if(updated)updated.textContent='Updated '+new Date().toLocaleString();
+  }catch(e){}
+}
+function clearLogView(){
+  var container=document.getElementById('log-container');
+  if(container)container.innerHTML='<div class="log-line" style="color:var(--faint)">Cleared — will refresh on next poll.</div>';
+}
 </script>
 </body>
 </html>
@@ -2154,7 +2210,7 @@ function startDashboard(port = 3000) {
           ready: a.status.ready, error: a.status.error, checked: a.status.checkedAt,
           enabled: a.enabled, configured: !!a.pass
         })),
-        logs:            logBuffer.slice(0, 30)
+        logs:            logBuffer.slice(0, 100)
       }));
       return;
     }
