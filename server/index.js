@@ -81,6 +81,8 @@ const CONSECUTIVE_FAIL_MAX = 3;             // auto-disable account after 3 cons
 let nextSendAt = null;
 const GH_BATCH_SIZE    = 10;             // parallel profile fetches per batch
 
+const SERVER_START_TIME = Date.now();
+
 const CAMPAIGN_SUBJECT_DEFAULT = 'Working together';
 const CAMPAIGN_BODY_DEFAULT =
 `I came across your profile and wanted to reach out directly.
@@ -839,10 +841,11 @@ function dashboardHTML() {
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap');
   *{box-sizing:border-box;margin:0;padding:0}
   ::selection{background:var(--accent);color:#fff}
-  ::-webkit-scrollbar{width:5px;height:5px}
-  ::-webkit-scrollbar-track{background:transparent}
-  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:99px}
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-track{background:var(--bg)}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:99px;border:1px solid var(--bg)}
   ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+  ::-webkit-scrollbar-corner{background:var(--bg)}
 
   :root{
     --bg:#f4f6fa;--bg-2:#eaecf4;--card:#ffffff;--card-2:#f8f9fc;
@@ -893,15 +896,15 @@ function dashboardHTML() {
   }
 
   body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.55;min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-  header{position:sticky;top:0;z-index:20;background:var(--hdr-bg);padding:0 28px;height:56px;display:flex;align-items:center;justify-content:space-between;gap:14px;box-shadow:0 2px 12px rgba(0,0,0,.15)}
-  .logo{display:flex;align-items:center;gap:11px}
-  .logo-icon{width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.15);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;font-size:.95rem;font-weight:900;color:#fff;border:1px solid rgba(255,255,255,.2)}
-  .logo-name{font-size:1rem;font-weight:800;color:#fff;letter-spacing:-.01em}
+  header{position:sticky;top:0;z-index:20;background:var(--hdr-bg);padding:0 28px;height:60px;display:flex;align-items:center;justify-content:space-between;gap:14px;box-shadow:0 2px 16px rgba(0,0,0,.18);backdrop-filter:blur(12px)}
+  .logo{display:flex;align-items:center;gap:12px}
+  .logo-icon{width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.18);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:900;color:#fff;border:1px solid rgba(255,255,255,.25);box-shadow:0 2px 8px rgba(0,0,0,.1)}
+  .logo-name{font-size:1.05rem;font-weight:800;color:#fff;letter-spacing:-.01em}
   .logo-sub{font-size:.6rem;color:rgba(255,255,255,.6);letter-spacing:.04em;font-weight:500}
   .hdr-right{display:flex;align-items:center;gap:10px}
   .hdr-controls{display:flex;gap:6px}
-  .badge{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:99px;font-size:.66rem;font-weight:600;border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.65);background:rgba(255,255,255,.08);transition:var(--transition)}
-  .badge.on{border-color:rgba(52,211,153,.6);color:#34d399;background:rgba(52,211,153,.12)}
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:99px;font-size:.66rem;font-weight:600;border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.6);background:rgba(255,255,255,.06);transition:var(--transition);backdrop-filter:blur(4px)}
+  .badge.on{border-color:rgba(52,211,153,.5);color:#34d399;background:rgba(52,211,153,.15);box-shadow:0 0 12px rgba(52,211,153,.15)}
   .pulse{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 1.8s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
@@ -912,17 +915,17 @@ function dashboardHTML() {
   #theme-toggle{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:99px;padding:5px 14px;font-size:.72rem;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;transition:var(--transition)}
   #theme-toggle:hover{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.35)}
 
-  main{max-width:1440px;margin:0 auto;padding:20px 28px 48px;display:flex;gap:0}
-  .main-content{flex:1;min-width:0;padding-left:22px}
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px}
-  .stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px 16px 14px;transition:var(--transition);position:relative;overflow:hidden}
+  main{max-width:1440px;margin:0 auto;padding:22px 28px 48px;display:flex;gap:0}
+  .main-content{flex:1;min-width:0;padding-left:24px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+  .stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 18px 16px;transition:var(--transition);position:relative;overflow:hidden}
   .stat::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--border);transition:var(--transition)}
   .stat:hover{box-shadow:var(--shadow);transform:translateY(-2px)}
   .stat:hover::before{background:var(--accent)}
   .stat.accent::before{background:var(--accent)}
   .stat.accent{border-left:3px solid var(--accent)}
-  .stat-val{font-size:1.75rem;font-weight:900;line-height:1;margin-bottom:4px;letter-spacing:-.03em;color:var(--ink)}
-  .stat-lbl{font-size:.6rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+  .stat-val{font-size:1.85rem;font-weight:900;line-height:1;margin-bottom:6px;letter-spacing:-.03em;color:var(--ink)}
+  .stat-lbl{font-size:.62rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
 
   .daily-chart{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;margin-bottom:20px;box-shadow:var(--shadow-sm);transition:var(--transition)}
   .daily-chart:hover{box-shadow:var(--shadow)}
@@ -946,9 +949,9 @@ function dashboardHTML() {
   .daily-summary-lbl{font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-top:3px}
 
   .controls{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
-  .ctrl-btn{padding:7px 16px;border-radius:var(--radius-sm);border:none;font-size:.76rem;font-weight:700;cursor:pointer;transition:var(--transition);display:inline-flex;align-items:center;gap:5px;letter-spacing:.01em}
+  .ctrl-btn{padding:8px 18px;border-radius:var(--radius-sm);border:none;font-size:.76rem;font-weight:700;cursor:pointer;transition:all .2s cubic-bezier(.4,0,.2,1);display:inline-flex;align-items:center;gap:6px;letter-spacing:.01em}
   .ctrl-btn:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
-  .ctrl-btn:active{transform:translateY(0) scale(.98)}
+  .ctrl-btn:active{transform:translateY(0) scale(.97)}
   .ctrl-btn:disabled{opacity:.35;cursor:default;transform:none;box-shadow:none}
   .ctrl-btn.green{background:#059669;color:#fff}
   .ctrl-btn.green:hover{background:#047857}
@@ -958,13 +961,13 @@ function dashboardHTML() {
   .ctrl-btn.red:hover{background:#b91c1c}
   .ctrl-btn.accent{background:var(--accent);color:#fff}
   .ctrl-btn.accent:hover{background:var(--accent-hover)}
-  .hdr-btn{font-size:.72rem;padding:6px 14px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+  .hdr-btn{font-size:.72rem;padding:7px 16px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.2);letter-spacing:.02em}
   .hdr-btn.green{background:rgba(5,150,105,.9)}
-  .hdr-btn.green:hover{background:#059669}
-  .hdr-btn.blue{background:rgba(8,145,178,.8)}
-  .hdr-btn.blue:hover{background:#0891b2}
+  .hdr-btn.green:hover{background:#059669;box-shadow:0 2px 12px rgba(5,150,105,.4)}
+  .hdr-btn.blue{background:rgba(8,145,178,.85)}
+  .hdr-btn.blue:hover{background:#0891b2;box-shadow:0 2px 12px rgba(8,145,178,.4)}
   .hdr-btn.red{background:rgba(220,38,38,.85)}
-  .hdr-btn.red:hover{background:#dc2626}
+  .hdr-btn.red:hover{background:#dc2626;box-shadow:0 2px 12px rgba(220,38,38,.4)}
 
   .panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);transition:var(--transition)}
   .panel:hover{box-shadow:var(--shadow)}
@@ -981,30 +984,32 @@ function dashboardHTML() {
   .progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),#06b6d4);border-radius:99px;transition:width .6s cubic-bezier(.4,0,.2,1);position:relative}
   .progress-fill::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.2),transparent);background-size:200% 100%;animation:shimmer 2s infinite linear}
 
-  table{width:100%;border-collapse:collapse;font-size:.77rem}
-  .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
-  th{padding:9px 10px;text-align:left;font-size:.62rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);white-space:nowrap;border-bottom:1px solid var(--border);background:var(--card-2)}
-  td{padding:9px 10px;border-bottom:1px solid var(--border-2);color:var(--ink-2);vertical-align:middle;white-space:nowrap;transition:background .1s}
+  table{width:100%;border-collapse:collapse;font-size:.72rem;table-layout:fixed}
+  .table-scroll{overflow-x:hidden;border-radius:0 0 var(--radius) var(--radius)}
+  th{padding:7px 6px;text-align:left;font-size:.58rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);white-space:nowrap;border-bottom:2px solid var(--border);background:var(--card-2);position:sticky;top:0;z-index:1;overflow:hidden}
+  td{padding:7px 6px;border-bottom:1px solid var(--border-2);color:var(--ink-2);vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:background .15s}
   tr:last-child td{border:none}
+  tr:nth-child(even) td{background:var(--card-2)}
   tr:hover td{background:var(--accent-bg)}
-  .filter-row td{padding:4px 6px;background:var(--card-2);border-bottom:1px solid var(--border)}
-  .col-filter-styled{width:100%;background:var(--card);border:1px solid var(--border);color:var(--ink);border-radius:var(--radius-xs);padding:4px 8px;font-size:.72rem;outline:none;transition:var(--transition)}
+  .filter-row td{padding:3px 4px;background:var(--card-2);border-bottom:1px solid var(--border)}
+  .col-filter-styled{width:100%;background:var(--card);border:1px solid var(--border);color:var(--ink);border-radius:var(--radius-xs);padding:3px 5px;font-size:.66rem;outline:none;transition:var(--transition)}
   .col-filter-styled:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-bg)}
-  .av{width:32px;height:32px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px;background:var(--bg-2);border:2px solid var(--border);transition:var(--transition)}
+  .av{width:26px;height:26px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:5px;background:var(--bg-2);border:1.5px solid var(--border);transition:var(--transition)}
   tr:hover .av{border-color:var(--accent)}
   td:hover .av+a,td:hover span>.av+a{opacity:1!important}
-  .av-ph{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--bg-2),var(--card-2));display:inline-flex;align-items:center;justify-content:center;font-size:.7rem;color:var(--faint);vertical-align:middle;margin-right:6px;font-weight:700;border:2px solid var(--border)}
+  .av-ph{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--bg-2),var(--card-2));display:inline-flex;align-items:center;justify-content:center;font-size:.62rem;color:var(--faint);vertical-align:middle;margin-right:5px;font-weight:700;border:1.5px solid var(--border)}
 
   .log-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow-sm);transition:var(--transition)}
   .log-wrap:hover{box-shadow:var(--shadow)}
-  .log-scroll{max-height:320px;overflow-y:auto;padding:12px 16px}
-  .log-line{font-family:'JetBrains Mono','Courier New',monospace;font-size:.7rem;line-height:1.8;white-space:pre-wrap;word-break:break-all;color:var(--muted);border-bottom:1px solid var(--border-2);padding:2px 0;transition:color .15s}
+  .log-scroll{max-height:400px;overflow-y:auto;padding:14px 18px}
+  .log-line{font-family:'JetBrains Mono','Courier New',monospace;font-size:.7rem;line-height:1.9;white-space:pre-wrap;word-break:break-all;color:var(--muted);border-bottom:1px solid var(--border-2);padding:3px 0;transition:all .15s}
   .log-line:last-child{border:none}
+  .log-line:hover{background:var(--accent-bg);padding-left:6px}
   .log-line.ok{color:var(--green);font-weight:500}
-  .log-line.err{color:var(--red);font-weight:500}
+  .log-line.err{color:var(--red);font-weight:600;background:var(--red-bg);padding:2px 6px;border-radius:4px;margin:1px 0}
 
-  .btn-action{background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);padding:6px 16px;font-size:.76rem;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block;transition:var(--transition);letter-spacing:.01em}
-  .btn-action:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:0 2px 8px var(--accent-glow)}
+  .btn-action{background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);padding:7px 18px;font-size:.76rem;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:5px;transition:all .2s cubic-bezier(.4,0,.2,1);letter-spacing:.01em}
+  .btn-action:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:0 3px 12px var(--accent-glow)}
   .btn-upload{background:var(--card-2);border:1px solid var(--border);color:var(--ink);border-radius:var(--radius-sm);padding:6px 16px;font-size:.76rem;font-weight:600;cursor:pointer;transition:var(--transition)}
   .btn-upload:hover{border-color:var(--accent);color:var(--accent)}
   code{background:var(--bg-2);padding:2px 6px;border-radius:4px;font-size:.74rem;font-family:'JetBrains Mono',monospace}
@@ -1027,20 +1032,20 @@ function dashboardHTML() {
     .daily-summary{gap:12px}
   }
 
-  .main-nav{display:flex;flex-direction:column;gap:3px;position:sticky;top:72px;align-self:flex-start;z-index:15;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:8px;min-width:180px;box-shadow:var(--shadow)}
-  .nav-btn{background:none;border:none;border-radius:10px;padding:10px 14px;font-size:.8rem;font-weight:600;color:var(--muted);cursor:pointer;transition:var(--transition);text-align:left;white-space:nowrap;display:flex;align-items:center;gap:10px;position:relative;letter-spacing:.01em}
-  .nav-btn .nav-icon{font-size:1rem;width:22px;text-align:center;flex-shrink:0;transition:transform .2s}
+  .main-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:72px;align-self:flex-start;z-index:15;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 8px;min-width:190px;box-shadow:var(--shadow)}
+  .nav-btn{background:none;border:none;border-radius:10px;padding:11px 14px;font-size:.8rem;font-weight:600;color:var(--muted);cursor:pointer;transition:all .18s cubic-bezier(.4,0,.2,1);text-align:left;white-space:nowrap;display:flex;align-items:center;gap:10px;position:relative;letter-spacing:.01em}
+  .nav-btn .nav-icon{font-size:1.05rem;width:24px;text-align:center;flex-shrink:0;transition:transform .2s}
   .nav-btn .nav-label{flex:1}
   .nav-btn .nav-count{font-size:.62rem;font-weight:700;background:var(--bg-2);color:var(--faint);padding:2px 8px;border-radius:99px;transition:var(--transition);min-width:24px;text-align:center}
-  .nav-btn.active{background:var(--accent);color:#fff;box-shadow:0 2px 12px var(--accent-glow);font-weight:700}
-  .nav-btn.active .nav-icon{transform:scale(1.12)}
-  .nav-btn.active .nav-count{background:rgba(255,255,255,.2);color:#fff}
+  .nav-btn.active{background:var(--accent);color:#fff;box-shadow:0 3px 14px var(--accent-glow);font-weight:700}
+  .nav-btn.active .nav-icon{transform:scale(1.15)}
+  .nav-btn.active .nav-count{background:rgba(255,255,255,.22);color:#fff}
   .nav-btn:hover:not(.active){background:var(--bg-2);color:var(--ink);transform:translateX(3px)}
-  .nav-btn:hover:not(.active) .nav-icon{transform:scale(1.1)}
-  .nav-sep{height:1px;background:var(--border);margin:4px 10px}
-  .nav-page{animation:slideUp .25s cubic-bezier(.4,0,.2,1)}
+  .nav-btn:hover:not(.active) .nav-icon{transform:scale(1.1);color:var(--accent)}
+  .nav-sep{height:1px;background:var(--border);margin:5px 12px}
+  .nav-page{animation:slideUp .3s cubic-bezier(.4,0,.2,1)}
   .pagination{display:flex;align-items:center;justify-content:center;gap:4px;padding:12px 16px;flex-wrap:wrap}
-  .pg-btn{background:var(--card-2);border:1px solid var(--border);color:var(--ink-2);border-radius:var(--radius-xs);padding:5px 10px;font-size:.73rem;font-weight:600;cursor:pointer;transition:var(--transition);min-width:32px;text-align:center}
+  .pg-btn{background:var(--card-2);border:1px solid var(--border);color:var(--ink-2);border-radius:var(--radius-xs);padding:4px 9px;font-size:.7rem;font-weight:600;cursor:pointer;transition:var(--transition);min-width:28px;text-align:center}
   .pg-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
   .pg-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 1px 4px var(--accent-glow)}
   .pg-btn:disabled{opacity:.35;cursor:default}
@@ -1048,24 +1053,26 @@ function dashboardHTML() {
   .pg-size{border:1px solid var(--border);border-radius:var(--radius-xs);padding:4px 8px;font-size:.73rem;background:var(--card);color:var(--ink);outline:none;transition:var(--transition)}
   .pg-size:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-bg)}
 
-  .target-panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:20px;box-shadow:var(--shadow-sm);transition:var(--transition)}
+  .target-panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:20px;box-shadow:var(--shadow-sm);transition:var(--transition)}
   .target-panel:hover{box-shadow:var(--shadow)}
-  .region-group{margin-bottom:12px}
-  .region-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer;user-select:none;padding:4px 6px;border-radius:var(--radius-sm);transition:background .15s}
+  .region-group{margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border-2)}
+  .region-group:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+  .region-header{display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;user-select:none;padding:6px 8px;border-radius:var(--radius-sm);transition:background .15s}
   .region-header:hover{background:var(--bg-2)}
-  .region-header h3{font-size:.76rem;font-weight:700;color:var(--ink);margin:0}
-  .region-check{accent-color:var(--accent);width:15px;height:15px;cursor:pointer}
-  .country-pills{display:flex;flex-wrap:wrap;gap:5px;padding-left:24px}
-  .country-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 12px;border-radius:99px;font-size:.7rem;font-weight:600;border:1px solid var(--border);color:var(--muted);cursor:pointer;transition:var(--transition);background:var(--card-2)}
-  .country-pill:hover{border-color:var(--accent);color:var(--accent);transform:translateY(-1px)}
-  .country-pill.selected{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);box-shadow:0 1px 4px var(--accent-glow)}
+  .region-header h3{font-size:.78rem;font-weight:700;color:var(--ink);margin:0}
+  .region-count{font-size:.62rem;font-weight:600;color:var(--faint);background:var(--bg-2);padding:1px 7px;border-radius:99px;margin-left:4px}
+  .region-check{accent-color:var(--accent);width:16px;height:16px;cursor:pointer}
+  .country-pills{display:flex;flex-wrap:wrap;gap:6px;padding-left:26px}
+  .country-pill{display:inline-flex;align-items:center;gap:4px;padding:5px 13px;border-radius:99px;font-size:.72rem;font-weight:600;border:1px solid var(--border);color:var(--muted);cursor:pointer;transition:all .18s cubic-bezier(.4,0,.2,1);background:var(--card-2)}
+  .country-pill:hover{border-color:var(--accent);color:var(--accent);transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.06)}
+  .country-pill.selected{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);box-shadow:0 2px 8px var(--accent-glow);font-weight:700}
   .country-pill .pill-count{font-size:.65rem;color:var(--faint);font-weight:400}
 
-  .filter-bar{display:flex;gap:8px;flex-wrap:wrap;padding:10px 16px;background:var(--card-2);border-bottom:1px solid var(--border);align-items:center}
-  .filter-bar select,.filter-bar input{border:1px solid var(--border);border-radius:var(--radius-xs);padding:6px 10px;font-size:.73rem;outline:none;background:var(--card);color:var(--ink);transition:var(--transition);font-family:inherit}
-  .filter-bar select:focus,.filter-bar input:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-bg)}
+  .filter-bar{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;background:var(--card-2);border-bottom:1px solid var(--border);align-items:center}
+  .filter-bar select,.filter-bar input{border:1px solid var(--border);border-radius:var(--radius-xs);padding:7px 11px;font-size:.73rem;outline:none;background:var(--card);color:var(--ink);transition:var(--transition);font-family:inherit}
+  .filter-bar select:focus,.filter-bar input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
 
-  #send-toast{position:fixed;bottom:28px;right:28px;background:var(--green);color:#fff;padding:12px 22px;border-radius:10px;font-size:.8rem;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.2);opacity:0;transform:translateY(20px);transition:opacity .3s ease,transform .3s ease;pointer-events:none;z-index:9999}
+  #send-toast{position:fixed;bottom:28px;right:28px;background:var(--green);color:#fff;padding:14px 24px;border-radius:12px;font-size:.8rem;font-weight:600;box-shadow:0 8px 32px rgba(0,0,0,.25);opacity:0;transform:translateY(20px) scale(.95);transition:opacity .3s ease,transform .3s cubic-bezier(.4,0,.2,1);pointer-events:none;z-index:9999;backdrop-filter:blur(8px)}
 
   .tpl-panel{padding:20px}
   .tpl-label{font-size:.68rem;font-weight:700;color:var(--faint);display:block;margin-bottom:5px;letter-spacing:.07em;text-transform:uppercase}
@@ -1087,9 +1094,9 @@ function dashboardHTML() {
   </div>
   <div class="hdr-right">
     <div class="hdr-controls">
-      <button id="btn-collect" class="ctrl-btn hdr-btn green" onclick="ctrlAction('collect-start')">&#9654; Get Emails</button>
-      <button id="btn-send" class="ctrl-btn hdr-btn blue" onclick="ctrlAction('campaign-start')">&#9993; Send Emails</button>
-      <button id="btn-stop" class="ctrl-btn hdr-btn red" onclick="ctrlAction('stop-all')">&#9632; Stop</button>
+      <button id="btn-collect" class="ctrl-btn hdr-btn green" onclick="ctrlAction('collect-start')">&#9654; Collect</button>
+      <button id="btn-send" class="ctrl-btn hdr-btn blue" onclick="ctrlAction('campaign-start')">&#9993; Send</button>
+      <button id="btn-stop" class="ctrl-btn hdr-btn red" onclick="ctrlAction('stop-all')">&#9724; Stop</button>
     </div>
     <div style="display:flex;gap:6px">
       <span class="badge ${collecting?'on':''}">
@@ -1109,28 +1116,25 @@ function dashboardHTML() {
   <!-- ── Main Nav ──────────────────────────────────────────────────────── -->
   <div class="main-nav">
     <button class="nav-btn active" data-nav="dashboard" onclick="switchNav('dashboard')">
-      <span class="nav-icon">&#9678;</span><span class="nav-label">Dashboard</span>
+      <span class="nav-icon">&#9671;</span><span class="nav-label">Dashboard</span>
     </button>
     <button class="nav-btn" data-nav="collected" onclick="switchNav('collected')">
-      <span class="nav-icon">&#9993;</span><span class="nav-label">Collected</span><span class="nav-count" id="visible-count">${real.length.toLocaleString()}</span>
+      <span class="nav-icon">&#128229;</span><span class="nav-label">Collected</span><span class="nav-count" id="visible-count">${real.length.toLocaleString()}</span>
     </button>
-    <div class="nav-sep"></div>
     <button class="nav-btn" data-nav="sent" onclick="switchNav('sent')">
-      <span class="nav-icon">&#10004;</span><span class="nav-label">Sent</span><span class="nav-count" id="sent-count">0</span>
+      <span class="nav-icon">&#128228;</span><span class="nav-label">Sent</span><span class="nav-count" id="sent-count">0</span>
     </button>
     <div class="nav-sep"></div>
     <button class="nav-btn" data-nav="targets" onclick="switchNav('targets')">
-      <span class="nav-icon">&#127758;</span><span class="nav-label">Targets</span>
+      <span class="nav-icon">&#127760;</span><span class="nav-label">Targets</span>
     </button>
-    <div class="nav-sep"></div>
     <button class="nav-btn" data-nav="test" onclick="switchNav('test')">
       <span class="nav-icon">&#9993;</span><span class="nav-label">Test Email</span>
     </button>
     <div class="nav-sep"></div>
     <button class="nav-btn" data-nav="logs" onclick="switchNav('logs')">
-      <span class="nav-icon">&#9998;</span><span class="nav-label">Logs</span>
+      <span class="nav-icon">&#128196;</span><span class="nav-label">Logs</span>
     </button>
-    <div class="nav-sep"></div>
     <button class="nav-btn" data-nav="settings" onclick="switchNav('settings')">
       <span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span>
     </button>
@@ -1141,34 +1145,38 @@ function dashboardHTML() {
   <div id="send-toast"></div>
 
   <!-- ── Live Progress Banners (visible on ALL tabs) ── -->
-  <div id="progress-banners" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+  <div id="progress-banners" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
     <!-- Collecting Progress -->
-    <div id="collect-banner" style="display:none;background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(16,185,129,.03));border:1px solid rgba(16,185,129,.25);border-radius:var(--radius);padding:12px 16px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;animation:blink 1.2s infinite"></span>
-          <span style="font-size:.82rem;font-weight:700;color:#10b981">COLLECTING EMAILS</span>
+    <div id="collect-banner" style="display:none;background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(16,185,129,.02));border:1px solid rgba(16,185,129,.2);border-radius:var(--radius);padding:14px 18px;box-shadow:0 2px 12px rgba(16,185,129,.08)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:rgba(16,185,129,.15);font-size:.85rem;animation:spin 2s linear infinite">&#10227;</span>
+          <div>
+            <span style="font-size:.82rem;font-weight:700;color:#10b981;display:block">Collecting Emails</span>
+            <span id="cb-detail" style="font-size:.7rem;color:var(--muted)">Starting&hellip;</span>
+          </div>
         </div>
-        <span id="cb-pct" style="font-size:.82rem;font-weight:700;color:#10b981">0%</span>
+        <span id="cb-pct" style="font-size:.95rem;font-weight:800;color:#10b981;background:rgba(16,185,129,.1);padding:4px 12px;border-radius:99px">0%</span>
       </div>
-      <div style="width:100%;height:6px;background:rgba(16,185,129,.12);border-radius:3px;overflow:hidden">
-        <div id="cb-fill" style="width:0%;height:100%;background:#10b981;border-radius:3px;transition:width .5s ease"></div>
+      <div style="width:100%;height:5px;background:rgba(16,185,129,.1);border-radius:99px;overflow:hidden">
+        <div id="cb-fill" style="width:0%;height:100%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:99px;transition:width .5s ease"></div>
       </div>
-      <div id="cb-detail" style="font-size:.72rem;color:var(--muted);margin-top:4px">Starting…</div>
     </div>
     <!-- Sending Progress -->
-    <div id="send-banner" style="display:none;background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(59,130,246,.03));border:1px solid rgba(59,130,246,.25);border-radius:var(--radius);padding:12px 16px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b82f6;animation:blink 1.2s infinite"></span>
-          <span style="font-size:.82rem;font-weight:700;color:#3b82f6">SENDING CAMPAIGN</span>
+    <div id="send-banner" style="display:none;background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(59,130,246,.02));border:1px solid rgba(59,130,246,.2);border-radius:var(--radius);padding:14px 18px;box-shadow:0 2px 12px rgba(59,130,246,.08)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:rgba(59,130,246,.15);font-size:.85rem">&#9993;</span>
+          <div>
+            <span style="font-size:.82rem;font-weight:700;color:#3b82f6;display:block">Sending Campaign</span>
+            <span id="sb-detail" style="font-size:.7rem;color:var(--muted)">Waiting&hellip;</span>
+          </div>
         </div>
-        <span id="sb-count" style="font-size:.82rem;font-weight:700;color:#3b82f6">0 / 0</span>
+        <span id="sb-count" style="font-size:.95rem;font-weight:800;color:#3b82f6;background:rgba(59,130,246,.1);padding:4px 12px;border-radius:99px">0 / 0</span>
       </div>
-      <div style="width:100%;height:6px;background:rgba(59,130,246,.12);border-radius:3px;overflow:hidden">
-        <div id="sb-fill" style="width:0%;height:100%;background:#3b82f6;border-radius:3px;transition:width .5s ease"></div>
+      <div style="width:100%;height:5px;background:rgba(59,130,246,.1);border-radius:99px;overflow:hidden">
+        <div id="sb-fill" style="width:0%;height:100%;background:linear-gradient(90deg,#3b82f6,#60a5fa);border-radius:99px;transition:width .5s ease"></div>
       </div>
-      <div id="sb-detail" style="font-size:.72rem;color:var(--muted);margin-top:4px">Waiting…</div>
     </div>
   </div>
 
@@ -1229,11 +1237,11 @@ function dashboardHTML() {
     </div>
 
     <!-- Sender Accounts -->
-    <div class="sec-hdr" style="margin-bottom:10px">
-      <span class="sec-title">Sender Accounts</span>
-      <button class="btn-action" onclick="recheckSmtp()" style="font-size:.72rem;padding:4px 14px">&#8635; Re-check All</button>
+    <div class="sec-hdr" style="margin-bottom:12px">
+      <span class="sec-title">&#128272; Sender Accounts</span>
+      <button class="btn-action" onclick="recheckSmtp()" style="font-size:.72rem;padding:5px 14px">&#8635; Re-check</button>
     </div>
-    <div id="accounts-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px"></div>
+    <div id="accounts-list" style="display:flex;flex-direction:column;gap:10px;margin-bottom:22px"></div>
 
     <span id="ctrl-msg" style="font-size:.8rem;color:var(--muted);display:block;margin-bottom:8px"></span>
     <!-- Status row -->
@@ -1286,35 +1294,38 @@ function dashboardHTML() {
       <span style="font-size:.68rem;color:var(--faint);margin-left:auto" id="filter-summary"></span>
     </div>
     <div class="table-scroll">
-      <table id="email-table" style="min-width:1200px">
+      <table id="email-table">
+        <colgroup>
+          <col style="width:12%"><col style="width:10%"><col style="width:16%"><col style="width:12%">
+          <col style="width:7%"><col style="width:9%"><col style="width:4%"><col style="width:4%">
+          <col style="width:3.5%"><col style="width:4%"><col style="width:8%"><col style="width:6%"><col style="width:4.5%">
+        </colgroup>
         <thead>
           <tr>
-            <th>User</th><th>Name</th><th>Email</th><th>Location</th><th>Country</th><th>Company</th><th>Flwrs</th><th>Repos</th><th>Hire</th><th>Sent</th><th>Telegram</th><th>Phone</th><th>LinkedIn</th><th>Seen</th><th>DL</th>
+            <th>User</th><th>Name</th><th>Email</th><th>Location</th><th>Country</th><th>Company</th><th>Flw</th><th>Rp</th><th>H</th><th>Sent</th><th>Telegram</th><th>Seen</th><th></th>
           </tr>
           <tr class="filter-row">
-            <td><input class="col-filter" data-col="0" placeholder="login&hellip;"></td>
-            <td><input class="col-filter" data-col="1" placeholder="name&hellip;"></td>
-            <td><input class="col-filter" data-col="2" placeholder="email&hellip;"></td>
-            <td><input class="col-filter" data-col="3" placeholder="location&hellip;"></td>
+            <td><input class="col-filter" data-col="0" placeholder="login"></td>
+            <td><input class="col-filter" data-col="1" placeholder="name"></td>
+            <td><input class="col-filter" data-col="2" placeholder="email"></td>
+            <td><input class="col-filter" data-col="3" placeholder="location"></td>
             <td></td>
-            <td><input class="col-filter" data-col="4" placeholder="company&hellip;"></td>
-            <td><input class="col-filter" data-col="5" placeholder="min&hellip;"></td>
+            <td><input class="col-filter" data-col="4" placeholder="company"></td>
+            <td><input class="col-filter" data-col="5" placeholder="min"></td>
             <td></td>
             <td>
-              <select class="col-filter" data-col="7"><option value="">all</option><option value="yes">yes</option><option value="no">no</option></select>
+              <select class="col-filter" data-col="7"><option value="">-</option><option value="yes">y</option><option value="no">n</option></select>
             </td>
             <td>
-              <select class="col-filter" data-col="8"><option value="">all</option><option value="sent">sent</option><option value="-">unsent</option></select>
+              <select class="col-filter" data-col="8"><option value="">-</option><option value="sent">y</option><option value="-">n</option></select>
             </td>
-            <td></td>
-            <td></td>
             <td></td>
             <td></td>
             <td></td>
           </tr>
         </thead>
         <tbody id="email-tbody">
-          <tr><td colspan="15" style="text-align:center;color:var(--faint);padding:20px">Loading&hellip;</td></tr>
+          <tr><td colspan="13" style="text-align:center;color:var(--faint);padding:20px">Loading&hellip;</td></tr>
         </tbody>
       </table>
     </div>
@@ -1337,12 +1348,17 @@ function dashboardHTML() {
         <input id="sf-location" placeholder="location&hellip;" style="flex:1">
       </div>
       <div class="table-scroll">
-      <table style="min-width:1100px">
+      <table>
+        <colgroup>
+          <col style="width:13%"><col style="width:8%"><col style="width:16%"><col style="width:7%">
+          <col style="width:5%"><col style="width:5%"><col style="width:12%"><col style="width:10%">
+          <col style="width:14%"><col style="width:10%">
+        </colgroup>
         <thead>
-          <tr><th>User</th><th>Name</th><th>Email</th><th>Country</th><th>Type</th><th>Status</th><th>Sender</th><th>Subject</th><th>Message Preview</th><th>Sent At</th><th>Telegram</th></tr>
+          <tr><th>User</th><th>Name</th><th>Email</th><th>Country</th><th>Type</th><th>Status</th><th>Sender</th><th>Subject</th><th>Preview</th><th>Sent At</th></tr>
         </thead>
         <tbody id="sent-tbody">
-          <tr><td colspan="11" style="text-align:center;color:var(--faint);padding:20px">Loading&hellip;</td></tr>
+          <tr><td colspan="10" style="text-align:center;color:var(--faint);padding:20px">Loading&hellip;</td></tr>
         </tbody>
       </table>
       </div>
@@ -1352,35 +1368,39 @@ function dashboardHTML() {
 
   <!-- ════════════ TARGETS TAB ════════════ -->
   <div id="nav-targets" class="nav-page" style="display:none">
-    <div class="sec-hdr" style="margin-bottom:10px">
-      <span class="sec-title">Collection Targets</span>
-      <button id="target-save-btn" class="btn-action" onclick="saveTargets()" style="font-size:.72rem;padding:4px 14px">Save Targets</button>
+    <div class="sec-hdr" style="margin-bottom:12px">
+      <span class="sec-title">&#127760; Collection Targets</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="collect-target-count" style="font-size:.68rem;font-weight:600;color:var(--muted)"></span>
+        <button id="target-save-btn" class="btn-action" onclick="saveTargets()" style="font-size:.72rem;padding:5px 16px">Save Targets</button>
+      </div>
     </div>
     <div class="target-panel" id="target-panel">
-      <div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">Select countries or regions, then click <b>Save Targets</b> before collecting.</div>
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:14px">Select countries or regions, then click <b>Save Targets</b> before collecting.</div>
       <div id="target-regions"></div>
-      <span id="target-msg" style="font-size:.78rem;color:var(--muted);margin-top:8px;display:block"></span>
+      <span id="target-msg" style="font-size:.78rem;color:var(--muted);margin-top:10px;display:block"></span>
     </div>
 
-    <div style="margin-top:28px"></div>
-
-    <div class="sec-hdr" style="margin-bottom:10px">
-      <span class="sec-title">Send Targets</span>
-      <button id="send-target-save-btn" class="btn-action" onclick="saveSendTargets()" style="font-size:.72rem;padding:4px 14px">Save Send Targets</button>
+    <div class="sec-hdr" style="margin-top:30px;margin-bottom:12px">
+      <span class="sec-title">&#128228; Send Targets</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="send-target-count" style="font-size:.68rem;font-weight:600;color:var(--muted)"></span>
+        <button id="send-target-save-btn" class="btn-action" onclick="saveSendTargets()" style="font-size:.72rem;padding:5px 16px">Save Send Targets</button>
+      </div>
     </div>
     <div class="target-panel" id="send-target-panel">
-      <div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">Select countries to <b>send emails to</b>. If none selected, sends to all collected emails.</div>
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:14px">Select countries to <b>send emails to</b>. If none selected, sends to all collected emails.</div>
       <div id="send-target-regions"></div>
-      <span id="send-target-msg" style="font-size:.78rem;color:var(--muted);margin-top:8px;display:block"></span>
+      <span id="send-target-msg" style="font-size:.78rem;color:var(--muted);margin-top:10px;display:block"></span>
     </div>
   </div>
 
   <!-- ════════════ TEST EMAIL TAB ════════════ -->
   <div id="nav-test" class="nav-page" style="display:none">
-    <div class="sec-hdr" style="margin-bottom:12px">
-      <span class="sec-title">Send Test Email</span>
+    <div class="sec-hdr" style="margin-bottom:14px">
+      <span class="sec-title">&#9993; Send Test Email</span>
     </div>
-    <div class="panel" style="padding:20px;margin-bottom:24px;max-width:700px">
+    <div class="panel" style="padding:24px;margin-bottom:16px;max-width:700px">
       <div style="display:flex;flex-direction:column;gap:12px">
         <div>
           <label style="font-size:.72rem;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Recipient</label>
@@ -1413,12 +1433,18 @@ function dashboardHTML() {
 
   <!-- ════════════ LOGS TAB ════════════ -->
   <div id="nav-logs" class="nav-page" style="display:none">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-      <span class="sec-title">Live Log</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="sec-title">Live Log</span>
+        <span id="log-count" style="font-size:.62rem;font-weight:700;background:var(--bg-2);color:var(--faint);padding:2px 8px;border-radius:99px"></span>
+      </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <span id="log-updated" style="color:var(--faint);font-size:.7rem"></span>
+        <span id="log-updated" style="color:var(--faint);font-size:.68rem"></span>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.7rem;color:var(--muted);cursor:pointer;user-select:none">
+          <input type="checkbox" id="log-autoscroll" checked style="accent-color:var(--accent)"> Auto-scroll
+        </label>
         <button class="btn-action" onclick="fetchLogs()" style="font-size:.72rem;padding:4px 12px">&#8635; Refresh</button>
-        <button class="btn-action" onclick="clearLogView()" style="font-size:.72rem;padding:4px 12px">Clear View</button>
+        <button class="btn-upload" onclick="clearLogView()" style="font-size:.72rem;padding:4px 12px">Clear</button>
       </div>
     </div>
     <div class="log-wrap" style="margin-bottom:24px">
@@ -1432,8 +1458,8 @@ function dashboardHTML() {
   <div id="nav-settings" class="nav-page" style="display:none">
 
     <!-- Safety Limits -->
-    <div class="sec-hdr" style="margin-top:24px;margin-bottom:10px">
-      <span class="sec-title">Sending Safety Limits</span>
+    <div class="sec-hdr" style="margin-bottom:12px">
+      <span class="sec-title">&#128274; Sending Safety Limits</span>
     </div>
     <div class="panel" style="padding:16px;margin-bottom:24px">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
@@ -1460,8 +1486,8 @@ function dashboardHTML() {
     </div>
 
     <!-- Email Template Editor -->
-    <div class="sec-hdr" style="margin-top:24px;margin-bottom:10px">
-      <span class="sec-title">Email Template</span>
+    <div class="sec-hdr" style="margin-top:28px;margin-bottom:12px">
+      <span class="sec-title">&#9993; Email Template</span>
     </div>
     <div class="panel tpl-panel" id="template-panel" style="margin-bottom:24px">
       <div id="tpl-lock-msg" style="display:none;align-items:center;gap:8px;padding:10px 14px;background:var(--red-bg,rgba(220,38,38,.08));border:1px solid var(--red,#dc2626);border-radius:var(--radius-sm);margin-bottom:12px;font-size:.78rem;color:var(--red,#dc2626);font-weight:600">
@@ -1505,7 +1531,15 @@ function dashboardHTML() {
   </div>
 </main>
 
-<footer>Realman &middot; <a href="/">Refresh</a></footer>
+<footer>
+  <div style="display:flex;align-items:center;justify-content:center;gap:8px">
+    <span style="font-weight:700;color:var(--muted)">&#9889; Realman</span>
+    <span style="color:var(--border)">&middot;</span>
+    <a href="/">Refresh</a>
+    <span style="color:var(--border)">&middot;</span>
+    <span id="footer-uptime" style="color:var(--faint);font-size:.68rem"></span>
+  </div>
+</footer>
 <script>
 // ── Theme ────────────────────────────────────────────────────────────────
 (function(){
@@ -1567,8 +1601,12 @@ async function pollStatus(){
     if(currentNav==='logs'&&d.logs){
       var lc=document.getElementById('log-container');
       var lu=document.getElementById('log-updated');
+      var lcnt=document.getElementById('log-count');
       if(lc)lc.innerHTML=d.logs.map(logLineHTML).join('');
-      if(lu)lu.textContent='Updated '+new Date().toLocaleString();
+      if(lu)lu.textContent='Updated '+new Date().toLocaleTimeString();
+      if(lcnt)lcnt.textContent=d.logs.length+' entries';
+      var autoS=document.getElementById('log-autoscroll');
+      if(lc&&autoS&&autoS.checked)lc.scrollTop=lc.scrollHeight;
     }
     // ── Collect progress banner ──
     var cbEl=document.getElementById('collect-banner');
@@ -1669,7 +1707,7 @@ async function pollStatus(){
           var statusText=!a.configured?'No Password':a.ready?'Ready':'Error';
           var toggleChecked=a.enabled?'checked':'';
           var toggleDisabled=!a.ready?'disabled':'';
-          return '<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);transition:var(--transition)">'
+          return '<div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);transition:var(--transition)" onmouseenter="this.style.boxShadow=\'var(--shadow)\'" onmouseleave="this.style.boxShadow=\'var(--shadow-sm)\'">'
             +'<div style="width:10px;height:10px;border-radius:50%;background:'+statusColor+';box-shadow:0 0 6px '+statusColor+';flex-shrink:0"></div>'
             +'<div style="flex:1;min-width:0">'
             +'<div style="font-size:.82rem;font-weight:700;color:var(--ink)">'+a.user+'</div>'
@@ -1699,14 +1737,19 @@ async function pollStatus(){
       if(currentNav==='collected')fetchEmails();
       else if(currentNav==='sent')fetchSent();
     }
+    var uf=document.getElementById('footer-uptime');
+    if(uf&&d.uptime){
+      var s=Math.floor(d.uptime/1000),m=Math.floor(s/60),h=Math.floor(m/60),dy=Math.floor(h/24);
+      uf.textContent='Uptime: '+(dy>0?dy+'d ':'')+(h%24)+'h '+(m%60)+'m';
+    }
     schedulePoll((campaignActiveHint||d.collecting)?3000:10000);return;
   }catch(e){}
   schedulePoll(campaignActiveHint?3000:10000);
 }
 function showToast(msg){
   var t=document.getElementById('send-toast');if(!t)return;
-  t.textContent=msg;t.style.opacity='1';t.style.transform='translateY(0)';
-  setTimeout(function(){t.style.opacity='0';t.style.transform='translateY(20px)'},4000);
+  t.textContent=msg;t.style.opacity='1';t.style.transform='translateY(0) scale(1)';
+  setTimeout(function(){t.style.opacity='0';t.style.transform='translateY(20px) scale(.95)'},4000);
 }
 async function recheckSmtp(){
   showToast('Re-checking all accounts…');
@@ -1808,8 +1851,9 @@ function renderTargets(){
     html+='<div class="region-header" onclick="toggleRegion(\\\''+reg+'\\\')">';
     html+='<input type="checkbox" class="region-check" '+(allSel?'checked':'')+(someSel&&!allSel?' style="opacity:.5"':'')
       +' onclick="event.stopPropagation();toggleRegion(\\\''+reg+'\\\')">';
+    var selCount=clist.filter(function(c){return _selected.has(c)}).length;
     html+='<h3>'+reg+'</h3>';
-    html+='<span style="font-size:.68rem;color:var(--faint)">'+clist.length+' countries</span>';
+    html+='<span class="region-count">'+selCount+' / '+clist.length+'</span>';
     html+='</div>';
     html+='<div class="country-pills">';
     for(var i=0;i<clist.length;i++){
@@ -1820,6 +1864,8 @@ function renderTargets(){
     html+='</div></div>';
   }
   document.getElementById('target-regions').innerHTML=html;
+  var ctc=document.getElementById('collect-target-count');
+  if(ctc)ctc.textContent=_selected.size?_selected.size+' selected':'';
 }
 function toggleRegion(reg){
   var clist=_regions[reg];if(!clist)return;
@@ -1857,8 +1903,9 @@ function renderSendTargets(){
     html+='<div class="region-header" onclick="toggleSendRegion(\\\''+reg+'\\\')">';
     html+='<input type="checkbox" class="region-check" '+(allSel?'checked':'')+(someSel&&!allSel?' style="opacity:.5"':'')
       +' onclick="event.stopPropagation();toggleSendRegion(\\\''+reg+'\\\')">';
+    var selCount2=clist.filter(function(c){return _sendSelected.has(c)}).length;
     html+='<h3>'+reg+'</h3>';
-    html+='<span style="font-size:.68rem;color:var(--faint)">'+clist.length+' countries</span>';
+    html+='<span class="region-count">'+selCount2+' / '+clist.length+'</span>';
     html+='</div>';
     html+='<div class="country-pills">';
     for(var i=0;i<clist.length;i++){
@@ -1869,6 +1916,8 @@ function renderSendTargets(){
     html+='</div></div>';
   }
   document.getElementById('send-target-regions').innerHTML=html;
+  var stc=document.getElementById('send-target-count');
+  if(stc)stc.textContent=_sendSelected.size?_sendSelected.size+' selected':'all countries';
 }
 function toggleSendRegion(reg){
   var clist=_regions[reg];if(!clist)return;
@@ -1916,34 +1965,33 @@ var vcnt=document.getElementById('visible-count');
 var fetchTimer=null;
 
 function buildRow(e){
-  var avDl=e.avatar&&e.login?'<a href="/avatar/'+e.login+'.png" title="Download avatar" style="position:absolute;bottom:-2px;right:-2px;background:var(--accent);color:#fff;width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;text-decoration:none;opacity:0;transition:opacity .15s;box-shadow:var(--shadow-sm)">⤓</a>':'';
-  var avUrl=e.avatar?(e.avatar+(e.avatar.indexOf('?')>-1?'&':'?')+'s=80'):'';
+  var avUrl=e.avatar?(e.avatar+(e.avatar.indexOf('?')>-1?'&':'?')+'s=56'):'';
   var av=avUrl
-    ?'<span style="position:relative;display:inline-block"><img class="av" src="'+avUrl+'" alt="'+(e.login||'')+'" loading="lazy" referrerpolicy="no-referrer">'+avDl+'</span>'
+    ?'<img class="av" src="'+avUrl+'" alt="'+(e.login||'')+'" loading="lazy" referrerpolicy="no-referrer">'
     :'<span class="av-ph">'+(e.login||'?').slice(0,1).toUpperCase()+'</span>';
+  var extras=[];
+  if(e.phone)extras.push('Phone: '+e.phone);
+  if(e.linkedin)extras.push('LinkedIn: '+e.linkedin);
+  var tip=extras.length?' title="'+extras.join(' | ')+'"':'';
   var userCell=av+(e.login
-    ?'<a href="'+(e.profile||'')+'" target="_blank" style="color:var(--accent);font-size:.75rem;font-weight:600">@'+e.login+'</a>'
+    ?'<a href="'+(e.profile||'')+'" target="_blank" style="color:var(--accent);font-size:.7rem;font-weight:600"'+tip+'>@'+e.login+'</a>'
     :'&mdash;');
-  var tgCell=e.telegram?'<a href="https://t.me/'+e.telegram+'" target="_blank" style="color:var(--blue);font-size:.72rem">@'+e.telegram+'</a>':'&mdash;';
-  var phCell=e.phone?'<a href="tel:'+e.phone+'" style="color:var(--green);font-size:.72rem">'+e.phone+'</a>':'&mdash;';
-  var liCell=e.linkedin?'<a href="https://linkedin.com/in/'+e.linkedin+'" target="_blank" style="color:var(--blue);font-size:.72rem">'+e.linkedin+'</a>':'&mdash;';
+  var tgCell=e.telegram?'<a href="https://t.me/'+e.telegram+'" target="_blank" style="color:var(--blue);font-size:.68rem">@'+e.telegram+'</a>':'&mdash;';
   var seenAt=(e.seen_at||'').replace('T',' ').slice(0,10);
   return '<tr>'
     +'<td>'+userCell+'</td>'
-    +'<td style="font-size:.78rem">'+((e.name)||'&mdash;')+'</td>'
-    +'<td><a href="mailto:'+(e.email||'')+'" style="color:var(--accent);font-size:.75rem">'+(e.email||'')+'</a></td>'
-    +'<td style="font-size:.75rem;color:var(--muted)" title="'+(e.location||'')+'">'+(e.location||'&mdash;')+'</td>'
-    +'<td style="font-size:.75rem"><span style="background:var(--accent-bg);color:var(--accent);padding:2px 8px;border-radius:99px;font-size:.68rem;font-weight:600">'+(e.country||'?')+'</span></td>'
-    +'<td style="font-size:.75rem;color:var(--muted)" title="'+(e.company||'')+'">'+(e.company||'&mdash;')+'</td>'
-    +'<td style="font-size:.75rem;text-align:center">'+(e.followers||0).toLocaleString()+'</td>'
-    +'<td style="font-size:.75rem;text-align:center">'+(e.repos||0)+'</td>'
-    +'<td style="text-align:center">'+(e.hireable?'<span style="color:var(--green);font-size:.72rem;font-weight:700">yes</span>':'&mdash;')+'</td>'
-    +'<td style="text-align:center">'+(e.is_sent?'<span style="background:rgba(16,185,129,.12);color:#10b981;padding:2px 8px;border-radius:99px;font-size:.65rem;font-weight:700">Sent</span>':'<span style="color:var(--border);font-size:.72rem">&ndash;</span>')+'</td>'
+    +'<td style="font-size:.72rem" title="'+(e.name||'')+'">'+((e.name)||'&mdash;')+'</td>'
+    +'<td><a href="mailto:'+(e.email||'')+'" style="color:var(--accent);font-size:.7rem" title="'+(e.email||'')+'">'+(e.email||'')+'</a></td>'
+    +'<td style="font-size:.7rem;color:var(--muted)" title="'+(e.location||'')+'">'+(e.location||'&mdash;')+'</td>'
+    +'<td><span style="background:var(--accent-bg);color:var(--accent);padding:1px 6px;border-radius:99px;font-size:.62rem;font-weight:600">'+(e.country||'?')+'</span></td>'
+    +'<td style="font-size:.7rem;color:var(--muted)" title="'+(e.company||'')+'">'+(e.company||'&mdash;')+'</td>'
+    +'<td style="font-size:.7rem;text-align:center">'+(e.followers||0).toLocaleString()+'</td>'
+    +'<td style="font-size:.7rem;text-align:center">'+(e.repos||0)+'</td>'
+    +'<td style="text-align:center">'+(e.hireable?'<span style="color:var(--green);font-size:.66rem;font-weight:700">&#10003;</span>':'&mdash;')+'</td>'
+    +'<td style="text-align:center">'+(e.is_sent?'<span style="background:rgba(16,185,129,.12);color:#10b981;padding:1px 6px;border-radius:99px;font-size:.6rem;font-weight:700">Sent</span>':'<span style="color:var(--border);font-size:.68rem">&ndash;</span>')+'</td>'
     +'<td>'+tgCell+'</td>'
-    +'<td>'+phCell+'</td>'
-    +'<td>'+liCell+'</td>'
-    +'<td style="font-size:.68rem;color:var(--faint)">'+seenAt+'</td>'
-    +'<td style="text-align:center"><a href="/avatar/'+e.login+'.png" title="Download avatar" style="color:var(--accent);font-size:.72rem;text-decoration:none">&#8681;</a></td>'
+    +'<td style="font-size:.64rem;color:var(--faint)">'+seenAt+'</td>'
+    +'<td style="text-align:center"><a href="/avatar/'+e.login+'.png" title="Download avatar" style="color:var(--accent);font-size:.68rem;text-decoration:none">&#8681;</a></td>'
     +'</tr>';
 }
 
@@ -2032,33 +2080,34 @@ async function fetchSent(){
       var av=e.avatar
         ?'<img class="av" src="'+e.avatar+'&s=56" alt="" loading="lazy">'
         :'<span class="av-ph">'+(e.login||e.email||'?').slice(0,1).toUpperCase()+'</span>';
+      var tipParts=[];
+      if(e.telegram)tipParts.push('TG: @'+e.telegram);
+      var userTip=tipParts.length?' title="'+tipParts.join(' | ')+'"':'';
       var userCell=av+(e.login
-        ?'<a href="'+(e.profile||'')+'" target="_blank" style="color:var(--accent);font-size:.75rem;font-weight:600">@'+e.login+'</a>'
-        :'<span style="font-size:.75rem;color:var(--faint)">'+e.email+'</span>');
-      var sentAt=(e.sent_at||'').replace('T',' ').slice(0,19);
+        ?'<a href="'+(e.profile||'')+'" target="_blank" style="color:var(--accent);font-size:.7rem;font-weight:600"'+userTip+'>@'+e.login+'</a>'
+        :'<span style="font-size:.7rem;color:var(--faint)"'+userTip+'>'+e.email+'</span>');
+      var sentAt=(e.sent_at||'').replace('T',' ').slice(0,16);
       var bodyText=(e.body||'');
-      var preview=bodyText.slice(0,80).replace(/</g,'&lt;')+(bodyText.length>80?'...':'');
-      var tgCell=e.telegram?'<a href="https://t.me/'+e.telegram+'" target="_blank" style="color:var(--blue);font-size:.72rem">@'+e.telegram+'</a>':'&mdash;';
+      var preview=bodyText.slice(0,60).replace(/</g,'&lt;')+(bodyText.length>60?'…':'');
       return '<tr>'
         +'<td>'+userCell+'</td>'
-        +'<td style="font-size:.78rem">'+(e.name||'&mdash;')+'</td>'
-        +'<td><a href="mailto:'+e.email+'" style="color:var(--accent);font-size:.75rem">'+e.email+'</a></td>'
-        +'<td style="font-size:.75rem">'+(e.country||'&mdash;')+'</td>'
-        +'<td><span style="font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:99px;letter-spacing:.03em;'
+        +'<td style="font-size:.7rem" title="'+(e.name||'')+'">'+(e.name||'&mdash;')+'</td>'
+        +'<td><a href="mailto:'+e.email+'" style="color:var(--accent);font-size:.7rem" title="'+e.email+'">'+e.email+'</a></td>'
+        +'<td style="font-size:.7rem">'+(e.country||'&mdash;')+'</td>'
+        +'<td><span style="font-size:.62rem;font-weight:700;padding:1px 6px;border-radius:99px;letter-spacing:.02em;'
           +(e.send_type==='test'?'background:rgba(37,99,235,.1);color:var(--blue)':'background:rgba(5,150,105,.1);color:var(--green)')
-          +'">'+(e.send_type==='test'?'Test':'Campaign')+'</span></td>'
-        +'<td><span style="font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:99px;letter-spacing:.03em;'
+          +'">'+(e.send_type==='test'?'Test':'Cmpn')+'</span></td>'
+        +'<td><span style="font-size:.62rem;font-weight:700;padding:1px 6px;border-radius:99px;letter-spacing:.02em;'
           +(e.status==='failed'?'background:rgba(220,38,38,.1);color:var(--red)':'background:rgba(5,150,105,.1);color:var(--green)')
-          +'" title="'+(e.error||'')+'">'+(e.status==='failed'?'\\u2717 Failed':'\\u2713 Sent')+'</span></td>'
-        +'<td style="font-size:.68rem;color:var(--muted)">'+(e.sender||'&mdash;')+'</td>'
-        +'<td style="font-size:.75rem;color:var(--muted)">'+(e.subject||'&mdash;')+'</td>'
-        +'<td style="font-size:.72rem;color:var(--muted)">'+preview+'</td>'
-        +'<td style="font-size:.72rem;color:var(--green);white-space:nowrap">'+sentAt+'</td>'
-        +'<td>'+tgCell+'</td>'
+          +'" title="'+(e.error||'')+'">'+(e.status==='failed'?'\\u2717':'\\u2713')+'</span></td>'
+        +'<td style="font-size:.64rem;color:var(--muted)" title="'+(e.sender||'')+'">'+(e.sender||'&mdash;')+'</td>'
+        +'<td style="font-size:.7rem;color:var(--muted)" title="'+(e.subject||'')+'">'+(e.subject||'&mdash;')+'</td>'
+        +'<td style="font-size:.68rem;color:var(--muted)" title="'+bodyText.replace(/"/g,'&quot;').slice(0,200)+'">'+preview+'</td>'
+        +'<td style="font-size:.66rem;color:var(--faint)">'+sentAt+'</td>'
         +'</tr>';
-    }).join(''):'<tr><td colspan="11" style="text-align:center;color:var(--faint);padding:20px">No sent emails yet</td></tr>';
+    }).join(''):'<tr><td colspan="10" style="text-align:center;color:var(--faint);padding:20px">No sent emails yet</td></tr>';
     sfoot.textContent=data.total>500?'Showing 500 of '+data.total.toLocaleString():'';
-  }catch(err){stbody.innerHTML='<tr><td colspan="11" style="color:var(--red);padding:16px">Error: '+err.message+'</td></tr>'}
+  }catch(err){stbody.innerHTML='<tr><td colspan="10" style="color:var(--red);padding:16px">Error: '+err.message+'</td></tr>'}
 }
 ['sf-email','sf-name','sf-country','sf-location'].forEach(function(id){
   var el=document.getElementById(id);
@@ -2150,13 +2199,18 @@ async function fetchLogs(){
     var r=await fetch('/api/stats');var d=await r.json();
     var container=document.getElementById('log-container');
     var updated=document.getElementById('log-updated');
+    var countEl=document.getElementById('log-count');
     if(!container)return;
     if(d.logs&&d.logs.length){
       container.innerHTML=d.logs.map(logLineHTML).join('');
+      if(countEl)countEl.textContent=d.logs.length+' entries';
+      var autoScroll=document.getElementById('log-autoscroll');
+      if(autoScroll&&autoScroll.checked)container.scrollTop=container.scrollHeight;
     }else{
       container.innerHTML='<div class="log-line" style="color:var(--faint)">No log entries yet.</div>';
+      if(countEl)countEl.textContent='';
     }
-    if(updated)updated.textContent='Updated '+new Date().toLocaleString();
+    if(updated)updated.textContent='Updated '+new Date().toLocaleTimeString();
   }catch(e){}
 }
 function clearLogView(){
@@ -2210,7 +2264,8 @@ function startDashboard(port = 3000) {
           ready: a.status.ready, error: a.status.error, checked: a.status.checkedAt,
           enabled: a.enabled, configured: !!a.pass
         })),
-        logs:            logBuffer.slice(0, 100)
+        logs:            logBuffer.slice(0, 100),
+        uptime:          Date.now() - SERVER_START_TIME
       }));
       return;
     }
