@@ -789,8 +789,7 @@ async function campaignTick() {
 
   const total    = dbSentCount();
   const subject  = getCampaignSubject();
-  const greeting = r.name ? 'Hi ' + r.name.split(' ')[0] + ',\n\n' : '';
-  const body     = greeting + getCampaignBody();
+  const body     = getCampaignBody().replace(/\{name\}/g, r.name ? r.name.split(' ')[0] : '');
   const senderDomain = acct.user.split('@')[1] || 'ravk.io';
 
   sendingNow = { email: r.email, name: r.name || r.login || r.email, via: acct.user };
@@ -2402,7 +2401,7 @@ async function loadTemplate(){
 function updatePreview(){
   var s=document.getElementById('tpl-subject').value;
   var b=document.getElementById('tpl-body').value;
-  var preview='Subject: '+s+'\\n\\nHi Alex,\\n\\n'+b;
+  var preview='Subject: '+s+'\\n\\n'+b.replace(/\{name\}/g,'Alex');
   document.getElementById('tpl-preview').textContent=preview;
 }
 document.getElementById('tpl-subject').addEventListener('input',updatePreview);
