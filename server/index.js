@@ -824,7 +824,7 @@ async function campaignTick() {
   const sendTgts = getSendTargets();
   let pickSql = `SELECT * FROM emails
      WHERE email NOT LIKE '_no_email_%'
-       AND email NOT IN (SELECT email FROM sent WHERE status='sent')`;
+       AND email NOT IN (SELECT email FROM sent WHERE status IN ('sent','bounced'))`;
   const pickParams = [];
   if (sendTgts.length) {
     pickSql += ' AND country IN (' + sendTgts.map(() => '?').join(',') + ')';
@@ -916,7 +916,7 @@ function dashboardHTML() {
   const totalSent = dbSentCount();
   const daily     = dbSentToday();
   const r = db.exec(
-    `SELECT COUNT(*) FROM emails WHERE email NOT LIKE '_no_email_%' AND email NOT IN (SELECT email FROM sent WHERE status='sent')`
+    `SELECT COUNT(*) FROM emails WHERE email NOT LIKE '_no_email_%' AND email NOT IN (SELECT email FROM sent WHERE status IN ('sent','bounced'))`
   );
   const unsent   = r.length ? r[0].values[0][0] : 0;
   const nextSend  = nextSendAt ? new Date(nextSendAt).toLocaleTimeString() : '—';
@@ -2390,8 +2390,8 @@ async function fetchSent(){
           +(e.send_type==='test'?'background:rgba(37,99,235,.1);color:var(--blue)':'background:rgba(5,150,105,.1);color:var(--green)')
           +'">'+(e.send_type==='test'?'Test':'Cmpn')+'</span></td>'
         +'<td><span style="font-size:.62rem;font-weight:700;padding:1px 6px;border-radius:99px;letter-spacing:.02em;'
-          +(e.status==='failed'?'background:rgba(220,38,38,.1);color:var(--red)':'background:rgba(5,150,105,.1);color:var(--green)')
-          +'" title="'+(e.error||'')+'">'+(e.status==='failed'?'\\u2717':'\\u2713')+'</span></td>'
+          +(e.status==='failed'||e.status==='bounced'?'background:rgba(220,38,38,.1);color:var(--red)':'background:rgba(5,150,105,.1);color:var(--green)')
+          +'" title="'+(e.error||'')+'">'+(e.status==='bounced'?'&#9888;':e.status==='failed'?'\\u2717':'\\u2713')+'</span></td>'
         +'<td style="font-size:.64rem;color:var(--muted)" title="'+(e.sender||'')+'">'+(e.sender||'&mdash;')+'</td>'
         +'<td style="font-size:.7rem;color:var(--muted)" title="'+(e.subject||'')+'">'+(e.subject||'&mdash;')+'</td>'
         +'<td style="font-size:.68rem;color:var(--muted)" title="'+bodyText.replace(/"/g,'&quot;').slice(0,200)+'">'+preview+'</td>'
@@ -2558,7 +2558,7 @@ function startDashboard(port = 3000) {
     if (req.method === 'GET' && req.url === '/api/stats') {
       syncState();
       const r2 = db.exec(
-        `SELECT COUNT(*) FROM emails WHERE email NOT LIKE '_no_email_%' AND email NOT IN (SELECT email FROM sent WHERE status='sent')`
+        `SELECT COUNT(*) FROM emails WHERE email NOT LIKE '_no_email_%' AND email NOT IN (SELECT email FROM sent WHERE status IN ('sent','bounced'))`
       );
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
@@ -2833,7 +2833,7 @@ function startDashboard(port = 3000) {
       if (qs.get('telegram'))  like('telegram', qs.get('telegram'));
       const sentFilter = qs.get('sent');
       if (sentFilter === 'sent')   conditions.push('emails.email IN (SELECT email FROM sent)');
-      if (sentFilter === 'unsent') conditions.push("emails.email NOT IN (SELECT email FROM sent WHERE status='sent')");
+      if (sentFilter === 'unsent') conditions.push("emails.email NOT IN (SELECT email FROM sent WHERE status IN ('sent','bounced'))");
       const page = Math.max(1, parseInt(qs.get('page')) || 1);
       const pageSize = Math.min(200, Math.max(10, parseInt(qs.get('pageSize')) || 50));
       const offset = (page - 1) * pageSize;
@@ -3094,14 +3094,38 @@ function checkRepliesForAccount(acct) {
                 const parsed = await simpleParser(rawMsg);
                 const fromAddr = parsed.from && parsed.from.value && parsed.from.value[0] ? parsed.from.value[0].address : '';
                 if (!fromAddr) continue;
+                const fromLower = fromAddr.toLowerCase();
+                const subj = (parsed.subject || '').toLowerCase();
+                // Skip DMARC/SPF reports and other automated system mail
+                if (fromLower.includes('noreply') || fromLower.includes('no-reply') ||
+                    fromLower.includes('dmarc') || fromLower.includes('postmaster') ||
+                    subj.includes('dmarc') || subj.includes('report domain')) continue;
+                // Handle bounce notifications — extract failed recipient and mark as bounced
+                if (fromLower.includes('mailer-daemon') || fromLower.includes('mail-daemon') ||
+                    subj.includes('delivery') && (subj.includes('fail') || subj.includes('undeliverable') || subj.includes('returned'))) {
+                  const body = (parsed.text || '') + ' ' + (parsed.subject || '');
+                  const emailMatch = body.match(/([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/g) || [];
+                  for (const bounced of emailMatch) {
+                    const bLower = bounced.toLowerCase();
+                    if (bLower === acct.user.toLowerCase()) continue;
+                    if (bLower.includes('mailer-daemon') || bLower.includes('postmaster')) continue;
+                    const sentCheck = db.exec("SELECT email FROM sent WHERE LOWER(email)=? AND status='sent'", [bLower]);
+                    if (sentCheck.length && sentCheck[0].values.length) {
+                      db.run("UPDATE sent SET status='bounced', error='Delivery failed permanently' WHERE LOWER(email)=?", [bLower]);
+                      dbSave();
+                      log('⛔ Bounce detected: ' + bounced + ' — marked as bounced');
+                    }
+                  }
+                  continue;
+                }
                 // Check if this is from someone we sent to
-                const sentRow = db.exec("SELECT email, replied FROM sent WHERE LOWER(email)=? AND status='sent'", [fromAddr.toLowerCase()]);
+                const sentRow = db.exec("SELECT email, replied FROM sent WHERE LOWER(email)=? AND status='sent'", [fromLower]);
                 if (!sentRow.length || !sentRow[0].values.length) continue;
                 if (sentRow[0].values[0][1] === 1) continue; // already marked
                 const replyText = (parsed.text || '').slice(0, 2000);
                 const replySubj = parsed.subject || '';
                 db.run("UPDATE sent SET replied=1, replied_at=?, reply_body=?, reply_from=? WHERE LOWER(email)=?",
-                  [new Date().toISOString(), replyText, fromAddr, fromAddr.toLowerCase()]);
+                  [new Date().toISOString(), replyText, fromAddr, fromLower]);
                 dbSave();
                 found++;
                 log('📩 Reply received from ' + fromAddr + ' — subject: ' + replySubj.slice(0, 60));
