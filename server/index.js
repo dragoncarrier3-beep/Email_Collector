@@ -1196,11 +1196,6 @@ function dashboardHTML() {
   .hourly-bar:hover{opacity:.8}
   .hourly-bar:hover::after{content:attr(data-tip);position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-size:.55rem;font-weight:700;color:var(--ink);white-space:nowrap;background:var(--card);padding:1px 5px;border-radius:4px;box-shadow:var(--shadow-sm)}
 
-  .reply-toggle{cursor:pointer;padding:1px 6px;border-radius:99px;font-size:.6rem;font-weight:700;transition:var(--transition)}
-  .reply-toggle.replied{background:rgba(124,58,237,.12);color:var(--purple)}
-  .reply-toggle.replied:hover{background:rgba(124,58,237,.2)}
-  .reply-toggle.unreplied{color:var(--border)}
-  .reply-toggle.unreplied:hover{color:var(--purple)}
 
   .tpl-panel{padding:20px}
   .tpl-label{font-size:.68rem;font-weight:700;color:var(--faint);display:block;margin-bottom:5px;letter-spacing:.07em;text-transform:uppercase}
@@ -2401,25 +2396,14 @@ async function fetchSent(){
           :'<span style="font-size:.6rem;color:var(--border)">&ndash;</span>')
         +'</td>'
         +'<td style="text-align:center">'+(e.replied
-          ?'<span class="reply-toggle replied" data-email="'+e.email.replace(/"/g,'&quot;')+'" data-replied="0" title="'+(e.reply_body?(e.reply_body||'').replace(/"/g,'&quot;').replace(/</g,'&lt;').slice(0,300):'Click to unmark')+'">&#10003;'+(e.reply_body?' &#128172;':'')+'</span>'
-          :'<span class="reply-toggle unreplied" data-email="'+e.email.replace(/"/g,'&quot;')+'" data-replied="1" title="Mark as replied">&ndash;</span>')
+          ?'<span style="font-size:.6rem;font-weight:700;padding:1px 6px;border-radius:99px;background:rgba(124,58,237,.12);color:var(--purple)" title="'+(e.reply_body?(e.reply_body||'').replace(/"/g,'&quot;').replace(/</g,'&lt;').slice(0,300):'Replied '+(e.replied_at||''))+'">&#10003; &#128172;</span>'
+          :'<span style="font-size:.6rem;color:var(--border)">&ndash;</span>')
         +'</td>'
         +'</tr>';
     }).join(''):'<tr><td colspan="12" style="text-align:center;color:var(--faint);padding:20px">No sent emails yet</td></tr>';
     sfoot.textContent=data.total>500?'Showing 500 of '+data.total.toLocaleString():'';
   }catch(err){stbody.innerHTML='<tr><td colspan="12" style="color:var(--red);padding:16px">Error: '+err.message+'</td></tr>'}
 }
-document.addEventListener('click',function(ev){
-  var el=ev.target.closest('.reply-toggle');
-  if(!el)return;
-  var email=el.getAttribute('data-email');
-  var replied=el.getAttribute('data-replied')==='1';
-  el.textContent='…';
-  fetch('/api/mark-replied',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,replied:replied})})
-    .then(function(r){return r.json()})
-    .then(function(d){if(d.ok){showToast(d.msg);fetchSent();pollStatus();}})
-    .catch(function(){});
-});
 ['sf-email','sf-name','sf-country','sf-location'].forEach(function(id){
   var el=document.getElementById(id);
   if(el)el.addEventListener('input',function(){clearTimeout(sentTimer);sentTimer=setTimeout(fetchSent,350)});
