@@ -1,5 +1,7 @@
 require('dotenv').config();
 const nodemailer = require('nodemailer');
+const Imap = require('imap');
+const { simpleParser } = require('mailparser');
 const https = require('https');
 const http  = require('http');
 const fs   = require('fs');
@@ -139,6 +141,8 @@ function dbInit(SQL) {
   try { db.run(`ALTER TABLE sent ADD COLUMN viewed INTEGER DEFAULT 0`); } catch(e) {}
   try { db.run(`ALTER TABLE sent ADD COLUMN viewed_at TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE sent ADD COLUMN view_count INTEGER DEFAULT 0`); } catch(e) {}
+  try { db.run(`ALTER TABLE sent ADD COLUMN reply_body TEXT DEFAULT ''`); } catch(e) {}
+  try { db.run(`ALTER TABLE sent ADD COLUMN reply_from TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE emails ADD COLUMN telegram TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE emails ADD COLUMN phone TEXT DEFAULT ''`); } catch(e) {}
   try { db.run(`ALTER TABLE emails ADD COLUMN linkedin TEXT DEFAULT ''`); } catch(e) {}
@@ -2397,7 +2401,7 @@ async function fetchSent(){
           :'<span style="font-size:.6rem;color:var(--border)">&ndash;</span>')
         +'</td>'
         +'<td style="text-align:center">'+(e.replied
-          ?'<span class="reply-toggle replied" data-email="'+e.email.replace(/"/g,'&quot;')+'" data-replied="0" title="Click to unmark">&#10003; Yes</span>'
+          ?'<span class="reply-toggle replied" data-email="'+e.email.replace(/"/g,'&quot;')+'" data-replied="0" title="'+(e.reply_body?(e.reply_body||'').replace(/"/g,'&quot;').replace(/</g,'&lt;').slice(0,300):'Click to unmark')+'">&#10003;'+(e.reply_body?' &#128172;':'')+'</span>'
           :'<span class="reply-toggle unreplied" data-email="'+e.email.replace(/"/g,'&quot;')+'" data-replied="1" title="Mark as replied">&ndash;</span>')
         +'</td>'
         +'</tr>';
@@ -2785,7 +2789,7 @@ function startDashboard(port = 3000) {
       if (qs.get('country'))  like('e.country', qs.get('country'));
       if (qs.get('location')) like('e.location', qs.get('location'));
       const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-      const sql = 'SELECT s.email, s.sent_at, s.subject, s.body, s.send_type, s.status, s.error, s.sender, s.replied, s.replied_at, s.viewed, s.viewed_at, s.view_count, e.name, e.avatar, e.country, e.location, e.company, e.login, e.profile, e.followers, e.hireable, e.telegram '
+      const sql = 'SELECT s.email, s.sent_at, s.subject, s.body, s.send_type, s.status, s.error, s.sender, s.replied, s.replied_at, s.viewed, s.viewed_at, s.view_count, s.reply_body, s.reply_from, e.name, e.avatar, e.country, e.location, e.company, e.login, e.profile, e.followers, e.hireable, e.telegram '
         + 'FROM sent s LEFT JOIN emails e ON s.email=e.email ' + where
         + ' ORDER BY s.sent_at DESC LIMIT 500';
       let rows = [];
@@ -3040,6 +3044,100 @@ function stopCampaign() {
   log('Campaign STOPPED.');
 }
 
+// ── IMAP Reply Monitor ────────────────────────────────────────────────────
+let replyCheckTimer = null;
+const REPLY_CHECK_INTERVAL = 5 * 60000; // check every 5 minutes
+
+function getImapHost(smtpHost) {
+  if (smtpHost.includes('gmail')) return 'imap.gmail.com';
+  if (smtpHost.includes('privateemail')) return 'mail.privateemail.com';
+  return smtpHost.replace('smtp.', 'imap.');
+}
+
+function checkRepliesForAccount(acct) {
+  return new Promise((resolve) => {
+    if (!acct.pass || !acct.status.ready) return resolve(0);
+    const imapConfig = {
+      user: acct.user,
+      password: acct.pass,
+      host: getImapHost(acct.host),
+      port: 993,
+      tls: true,
+      tlsOptions: { rejectUnauthorized: false },
+      authTimeout: 15000,
+      connTimeout: 15000
+    };
+    const imap = new Imap(imapConfig);
+    let found = 0;
+
+    imap.once('ready', () => {
+      imap.openBox('INBOX', true, (err) => {
+        if (err) { imap.end(); return resolve(0); }
+        // Search for recent unseen messages (last 3 days)
+        const since = new Date();
+        since.setDate(since.getDate() - 3);
+        imap.search(['UNSEEN', ['SINCE', since]], (err2, results) => {
+          if (err2 || !results || !results.length) { imap.end(); return resolve(0); }
+          const f = imap.fetch(results, { bodies: '', struct: true });
+          const msgs = [];
+          f.on('message', (msg) => {
+            let raw = '';
+            msg.on('body', (stream) => {
+              stream.on('data', (chunk) => { raw += chunk.toString('utf8'); });
+            });
+            msg.once('end', () => { msgs.push(raw); });
+          });
+          f.once('error', () => { imap.end(); resolve(0); });
+          f.once('end', async () => {
+            for (const rawMsg of msgs) {
+              try {
+                const parsed = await simpleParser(rawMsg);
+                const fromAddr = parsed.from && parsed.from.value && parsed.from.value[0] ? parsed.from.value[0].address : '';
+                if (!fromAddr) continue;
+                // Check if this is from someone we sent to
+                const sentRow = db.exec("SELECT email, replied FROM sent WHERE LOWER(email)=? AND status='sent'", [fromAddr.toLowerCase()]);
+                if (!sentRow.length || !sentRow[0].values.length) continue;
+                if (sentRow[0].values[0][1] === 1) continue; // already marked
+                const replyText = (parsed.text || '').slice(0, 2000);
+                const replySubj = parsed.subject || '';
+                db.run("UPDATE sent SET replied=1, replied_at=?, reply_body=?, reply_from=? WHERE LOWER(email)=?",
+                  [new Date().toISOString(), replyText, fromAddr, fromAddr.toLowerCase()]);
+                dbSave();
+                found++;
+                log('📩 Reply received from ' + fromAddr + ' — subject: ' + replySubj.slice(0, 60));
+              } catch(e) {}
+            }
+            imap.end();
+            resolve(found);
+          });
+        });
+      });
+    });
+    imap.once('error', () => resolve(0));
+    imap.once('end', () => {});
+    try { imap.connect(); } catch(e) { resolve(0); }
+  });
+}
+
+async function checkAllReplies() {
+  const ready = smtpAccounts.filter(a => a.pass && a.status.ready);
+  if (!ready.length) return;
+  let totalFound = 0;
+  for (const acct of ready) {
+    try {
+      const n = await checkRepliesForAccount(acct);
+      totalFound += n;
+    } catch(e) {}
+  }
+  if (totalFound > 0) log('📩 Reply check done — ' + totalFound + ' new replies found');
+}
+
+function startReplyMonitor() {
+  checkAllReplies();
+  replyCheckTimer = setInterval(checkAllReplies, REPLY_CHECK_INTERVAL);
+  log('Reply monitor started — checking every ' + Math.round(REPLY_CHECK_INTERVAL / 60000) + ' min');
+}
+
 // ── CLI keyboard commands ──────────────────────────────────────────────────
 function startCLI() {
   const readline = require('readline');
@@ -3075,6 +3173,9 @@ async function main() {
   startDashboard(3000);
 
   verifyAllAccounts();
+
+  // Start reply monitor after accounts are verified
+  setTimeout(startReplyMonitor, 15000);
 
   log('Ready. Use the dashboard buttons or type: start | stop | status | quit');
 
