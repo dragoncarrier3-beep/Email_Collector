@@ -73,8 +73,8 @@ function getReadyAccounts() {
 }
 let accountRotation = 0;
 // ── Safety limits (warm-up phase 1: weeks 1–2) ───────────────────────────
-const PER_ACCOUNT_DAILY    = 5;             // max emails/day per single account
-const PER_ACCOUNT_HOURLY   = 2;             // max emails/hour per single account
+const PER_ACCOUNT_DAILY    = 10;            // max emails/day per single account
+const PER_ACCOUNT_HOURLY   = 3;             // max emails/hour per single account
 function getDailyLimit() { return Math.max(1, getReadyAccounts().length) * PER_ACCOUNT_DAILY; }
 const MIN_INTERVAL_MS      = 20 * 60000;    // minimum 20 min between batch sends
 const SEND_INTERVAL_MS     = MIN_INTERVAL_MS; // send a batch every 20 min
