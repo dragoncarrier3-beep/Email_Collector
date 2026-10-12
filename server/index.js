@@ -452,7 +452,11 @@ function extractCountry(location) {
   return '';
 }
 
-function extractTelegram(bio, blog) {
+function extractTelegram(bio, blog, socialMap) {
+  if (socialMap && socialMap.telegram) {
+    const tm = socialMap.telegram.match(/t\.me\/([a-zA-Z][a-zA-Z0-9_]{3,31})/i);
+    if (tm) return tm[1];
+  }
   const combined = bio + ' ' + blog;
   const m = combined.match(/(?:t\.me\/|telegram[:\s]*@?|tg[:\s]*@?)([a-zA-Z][a-zA-Z0-9_]{3,31})/i);
   if (m) return m[1];
@@ -470,7 +474,11 @@ function extractPhone(bio, blog) {
   return '';
 }
 
-function extractLinkedin(bio, blog) {
+function extractLinkedin(bio, blog, socialMap) {
+  if (socialMap && socialMap.linkedin) {
+    const lm = socialMap.linkedin.match(/linkedin\.com\/in\/([a-zA-Z0-9_-]{3,100})/i);
+    if (lm) return lm[1].replace(/\/+$/, '');
+  }
   const combined = (bio || '') + ' ' + (blog || '');
   const m = combined.match(/linkedin\.com\/in\/([a-zA-Z0-9_-]{3,100})/i);
   if (m) return m[1].replace(/\/+$/, '');
@@ -661,9 +669,13 @@ function saveProfile(profile, segCountry, targetSet) {
     return false;
   }
   if (dbEmailExists(profile.email)) return false;
-  const tg = extractTelegram(profile.bio || '', profile.blog || '');
+  // Extract from social_accounts API if available
+  const socials = Array.isArray(profile._socials) ? profile._socials : [];
+  const socialMap = {};
+  socials.forEach(s => { if (s && s.provider && s.url) socialMap[s.provider] = s.url; });
+  const tg = extractTelegram(profile.bio || '', profile.blog || '', socialMap);
   const ph = extractPhone(profile.bio || '', profile.blog || '');
-  const li = extractLinkedin(profile.bio || '', profile.blog || '');
+  const li = extractLinkedin(profile.bio || '', profile.blog || '', socialMap);
   dbInsertEmail({
     login:    profile.login              || '',
     name:     profile.name               || '',
@@ -672,8 +684,8 @@ function saveProfile(profile, segCountry, targetSet) {
     country:  country,
     company:  (profile.company||'').replace(/^@/,''),
     bio:      profile.bio                || '',
-    blog:     profile.blog               || '',
-    twitter:  profile.twitter_username   || '',
+    blog:     profile.blog || (socialMap.generic || '') || '',
+    twitter:  profile.twitter_username || (socialMap.twitter ? socialMap.twitter.replace(/.*twitter\.com\/|.*x\.com\//i,'').replace(/\/.*$/,'') : '') || '',
     telegram: tg,
     phone:    ph,
     linkedin: li,
@@ -743,7 +755,15 @@ async function collectLoop() {
       const profiles = await Promise.all(
         batch.map(u => ghGet(`/users/${u.login}`).catch(() => null))
       );
-      for (const p of profiles) if (p) saveProfile(p, segCountry, targetSet);
+      // Fetch social accounts in parallel for profiles that have email
+      const socials = await Promise.all(
+        profiles.map(p => p && p.email ? ghGet(`/users/${p.login}/social_accounts`).catch(() => []) : Promise.resolve([]))
+      );
+      for (let pi = 0; pi < profiles.length; pi++) {
+        if (!profiles[pi]) continue;
+        profiles[pi]._socials = socials[pi] || [];
+        saveProfile(profiles[pi], segCountry, targetSet);
+      }
       await sleep(300);
     }
 
