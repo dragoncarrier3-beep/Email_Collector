@@ -1179,6 +1179,12 @@ function dashboardHTML() {
   .filter-bar{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;background:var(--card-2);border-bottom:1px solid var(--border);align-items:center}
   .filter-bar select,.filter-bar input{border:1px solid var(--border);border-radius:var(--radius-xs);padding:7px 11px;font-size:.73rem;outline:none;background:var(--card);color:var(--ink);transition:var(--transition);font-family:inherit}
   .filter-bar select:focus,.filter-bar input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
+  .sf-filter{border:1px solid var(--border);border-radius:99px;padding:4px 12px;font-size:.68rem;font-weight:600;background:var(--card);color:var(--faint);cursor:pointer;transition:var(--transition)}
+  .sf-filter:hover{border-color:var(--accent);color:var(--ink)}
+  .sf-filter.active{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+  .pagination-btn{border:1px solid var(--border);border-radius:var(--radius-xs);padding:4px 12px;font-size:.7rem;font-weight:600;background:var(--card);color:var(--ink);cursor:pointer;transition:var(--transition)}
+  .pagination-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  .pagination-btn:disabled{opacity:.35;cursor:default}
 
   #send-toast{position:fixed;bottom:28px;right:28px;background:var(--green);color:#fff;padding:14px 24px;border-radius:12px;font-size:.8rem;font-weight:600;box-shadow:0 8px 32px rgba(0,0,0,.25);opacity:0;transform:translateY(20px) scale(.95);transition:opacity .3s ease,transform .3s cubic-bezier(.4,0,.2,1);pointer-events:none;z-index:9999;backdrop-filter:blur(8px)}
 
@@ -1506,6 +1512,13 @@ function dashboardHTML() {
       <span class="sec-title">Sent History</span>
     </div>
     <div class="panel" style="overflow:hidden;margin-bottom:24px">
+      <div style="display:flex;gap:6px;padding:10px 16px;flex-wrap:wrap;align-items:center">
+        <button class="sf-filter active" data-filter="">All</button>
+        <button class="sf-filter" data-filter="replied">&#128172; Replied</button>
+        <button class="sf-filter" data-filter="viewed">&#128065; Viewed</button>
+        <button class="sf-filter" data-filter="bounced">&#9888; Bounced</button>
+        <button class="sf-filter" data-filter="failed">&#10007; Failed</button>
+      </div>
       <div class="filter-bar">
         <input id="sf-email" placeholder="email&hellip;" style="flex:1">
         <input id="sf-name" placeholder="name&hellip;" style="flex:1">
@@ -1527,7 +1540,13 @@ function dashboardHTML() {
         </tbody>
       </table>
       </div>
-      <div id="sent-footer" style="padding:10px 16px;font-size:.75rem;color:var(--faint)"></div>
+      <div id="sent-footer" style="padding:10px 16px;font-size:.75rem;color:var(--faint);display:flex;align-items:center;justify-content:space-between">
+        <span id="sent-page-info"></span>
+        <span style="display:flex;gap:6px">
+          <button id="sent-prev" class="pagination-btn" disabled>&laquo; Prev</button>
+          <button id="sent-next" class="pagination-btn">Next &raquo;</button>
+        </span>
+      </div>
     </div>
   </div>
 
@@ -2349,9 +2368,10 @@ document.querySelectorAll('.col-filter').forEach(function(el){
 
 // ── Sent history ─────────────────────────────────────────────────────────
 var sentTimer=null;
+var _sentPage=1;
+var _sentFilter='';
 async function fetchSent(){
   var stbody=document.getElementById('sent-tbody');
-  var sfoot=document.getElementById('sent-footer');
   var scnt=document.getElementById('sent-count');
   var params=new URLSearchParams();
   var vEmail=document.getElementById('sf-email'),vName=document.getElementById('sf-name');
@@ -2360,6 +2380,9 @@ async function fetchSent(){
   if(vName&&vName.value.trim())params.set('name',vName.value.trim());
   if(vCnt&&vCnt.value.trim())params.set('country',vCnt.value.trim());
   if(vLoc&&vLoc.value.trim())params.set('location',vLoc.value.trim());
+  if(_sentFilter)params.set('filter',_sentFilter);
+  params.set('page',_sentPage);
+  params.set('limit','50');
   try{
     var res=await fetch('/api/sent?'+params.toString());var data=await res.json();
     if(scnt)scnt.textContent=data.total.toLocaleString();
@@ -2401,13 +2424,29 @@ async function fetchSent(){
         +'</td>'
         +'</tr>';
     }).join(''):'<tr><td colspan="12" style="text-align:center;color:var(--faint);padding:20px">No sent emails yet</td></tr>';
-    sfoot.textContent=data.total>500?'Showing 500 of '+data.total.toLocaleString():'';
+    var pageInfo=document.getElementById('sent-page-info');
+    var prevBtn=document.getElementById('sent-prev');
+    var nextBtn=document.getElementById('sent-next');
+    if(pageInfo)pageInfo.textContent='Page '+data.page+' of '+data.totalPages+' ('+data.total.toLocaleString()+' total)';
+    if(prevBtn)prevBtn.disabled=data.page<=1;
+    if(nextBtn)nextBtn.disabled=data.page>=data.totalPages;
   }catch(err){stbody.innerHTML='<tr><td colspan="12" style="color:var(--red);padding:16px">Error: '+err.message+'</td></tr>'}
 }
 ['sf-email','sf-name','sf-country','sf-location'].forEach(function(id){
   var el=document.getElementById(id);
-  if(el)el.addEventListener('input',function(){clearTimeout(sentTimer);sentTimer=setTimeout(fetchSent,350)});
+  if(el)el.addEventListener('input',function(){_sentPage=1;clearTimeout(sentTimer);sentTimer=setTimeout(fetchSent,350)});
 });
+document.querySelectorAll('.sf-filter').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    document.querySelectorAll('.sf-filter').forEach(function(b){b.classList.remove('active')});
+    btn.classList.add('active');
+    _sentFilter=btn.getAttribute('data-filter');
+    _sentPage=1;
+    fetchSent();
+  });
+});
+document.getElementById('sent-prev').addEventListener('click',function(){if(_sentPage>1){_sentPage--;fetchSent()}});
+document.getElementById('sent-next').addEventListener('click',function(){_sentPage++;fetchSent()});
 
 // ── CSV import ───────────────────────────────────────────────────────────
 var fileInput=document.getElementById('csv-file');
@@ -2772,10 +2811,18 @@ function startDashboard(port = 3000) {
       if (qs.get('name'))     like('e.name',  qs.get('name'));
       if (qs.get('country'))  like('e.country', qs.get('country'));
       if (qs.get('location')) like('e.location', qs.get('location'));
+      const filter = qs.get('filter') || '';
+      if (filter === 'replied')  conditions.push('s.replied = 1');
+      if (filter === 'viewed')   conditions.push('s.viewed = 1');
+      if (filter === 'bounced')  conditions.push("s.status = 'bounced'");
+      if (filter === 'failed')   conditions.push("s.status = 'failed'");
+      const page = Math.max(1, parseInt(qs.get('page')) || 1);
+      const limit = Math.min(100, Math.max(10, parseInt(qs.get('limit')) || 50));
+      const offset = (page - 1) * limit;
       const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
       const sql = 'SELECT s.email, s.sent_at, s.subject, s.body, s.send_type, s.status, s.error, s.sender, s.replied, s.replied_at, s.viewed, s.viewed_at, s.view_count, s.reply_body, s.reply_from, e.name, e.avatar, e.country, e.location, e.company, e.login, e.profile, e.followers, e.hireable, e.telegram '
         + 'FROM sent s LEFT JOIN emails e ON s.email=e.email ' + where
-        + ' ORDER BY s.sent_at DESC LIMIT 500';
+        + ' ORDER BY s.sent_at DESC LIMIT ' + limit + ' OFFSET ' + offset;
       let rows = [];
       try {
         const r = db.exec(sql, params);
@@ -2785,8 +2832,10 @@ function startDashboard(port = 3000) {
         }
       } catch(e) {}
       const total = db.exec('SELECT COUNT(*) FROM sent s LEFT JOIN emails e ON s.email=e.email ' + where, params);
+      const totalCount = total.length ? total[0].values[0][0] : 0;
+      const totalPages = Math.ceil(totalCount / limit) || 1;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ rows, total: total.length ? total[0].values[0][0] : 0 }));
+      res.end(JSON.stringify({ rows, total: totalCount, page, totalPages, limit }));
       return;
     }
 
