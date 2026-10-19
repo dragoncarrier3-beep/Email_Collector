@@ -1257,6 +1257,9 @@ function dashboardHTML() {
       <span class="nav-icon">&#128228;</span><span class="nav-label">Sent</span><span class="nav-count" id="sent-count">0</span>
     </button>
     <div class="nav-sep"></div>
+    <button class="nav-btn" data-nav="accounts" onclick="switchNav('accounts')">
+      <span class="nav-icon">&#128272;</span><span class="nav-label">Accounts</span><span class="nav-count" id="acct-count">0</span>
+    </button>
     <button class="nav-btn" data-nav="targets" onclick="switchNav('targets')">
       <span class="nav-icon">&#127760;</span><span class="nav-label">Targets</span>
     </button>
@@ -1410,12 +1413,6 @@ function dashboardHTML() {
       <div id="account-stats" style="padding:8px 0"></div>
     </div>
 
-    <!-- Sender Accounts -->
-    <div class="sec-hdr" style="margin-bottom:12px">
-      <span class="sec-title">&#128272; Sender Accounts</span>
-      <button class="btn-action" onclick="recheckSmtp()" style="font-size:.72rem;padding:5px 14px">&#8635; Re-check</button>
-    </div>
-    <div id="accounts-list" style="display:flex;flex-direction:column;gap:10px;margin-bottom:22px"></div>
 
     <span id="ctrl-msg" style="font-size:.8rem;color:var(--muted);display:block;margin-bottom:8px"></span>
     <!-- Status row -->
@@ -1551,6 +1548,15 @@ function dashboardHTML() {
         </span>
       </div>
     </div>
+  </div>
+
+  <!-- ════════════ ACCOUNTS TAB ════════════ -->
+  <div id="nav-accounts" class="nav-page" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <span class="sec-title">&#128272; Sender Accounts</span>
+      <button class="btn-action" onclick="recheckSmtp()" style="font-size:.72rem;padding:5px 14px">&#8635; Re-check</button>
+    </div>
+    <div id="accounts-list"></div>
   </div>
 
   <!-- ════════════ TARGETS TAB ════════════ -->
@@ -2000,6 +2006,8 @@ async function pollStatus(){
       }
     }
     if(d.accounts){
+      var acctCnt=document.getElementById('acct-count');
+      if(acctCnt)acctCnt.textContent=d.accounts.filter(function(a){return a.ready}).length+'/'+d.accounts.length;
       var list=document.getElementById('accounts-list');
       var sel=document.getElementById('test-email-from');
       if(list){
