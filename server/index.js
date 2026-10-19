@@ -3116,7 +3116,7 @@ const REPLY_CHECK_INTERVAL = 5 * 60000; // check every 5 minutes
 function getImapHost(smtpHost) {
   if (smtpHost.includes('gmail')) return 'imap.gmail.com';
   if (smtpHost.includes('privateemail')) return 'mail.privateemail.com';
-  if (smtpHost.includes('office365') || smtpHost.includes('outlook')) return 'outlook.office365.com';
+  if (smtpHost.includes('office365') || smtpHost.includes('outlook') || smtpHost.includes('smtp-mail')) return 'outlook.office365.com';
   return smtpHost.replace('smtp.', 'imap.');
 }
 
