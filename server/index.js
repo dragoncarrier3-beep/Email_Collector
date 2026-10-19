@@ -1114,8 +1114,11 @@ function dashboardHTML() {
   .log-line.ok{color:var(--green);font-weight:500}
   .log-line.err{color:var(--red);font-weight:600;background:var(--red-bg);padding:2px 6px;border-radius:4px;margin:1px 0}
 
-  .account-card{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);transition:var(--transition)}
-  .account-card:hover{box-shadow:var(--shadow)}
+  .account-card{display:flex;flex-direction:column;gap:10px;padding:16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);transition:var(--transition);min-width:0}
+  .account-card:hover{box-shadow:var(--shadow);border-color:var(--accent)}
+  .acct-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+  .acct-group-label{font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:16px 0 8px;padding-left:2px}
+  .acct-group-label:first-child{margin-top:0}
   .btn-action{background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);padding:7px 18px;font-size:.76rem;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:5px;transition:all .2s cubic-bezier(.4,0,.2,1);letter-spacing:.01em}
   .btn-action:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:0 3px 12px var(--accent-glow)}
   .btn-upload{background:var(--card-2);border:1px solid var(--border);color:var(--ink);border-radius:var(--radius-sm);padding:6px 16px;font-size:.76rem;font-weight:600;cursor:pointer;transition:var(--transition)}
@@ -2000,28 +2003,49 @@ async function pollStatus(){
       var list=document.getElementById('accounts-list');
       var sel=document.getElementById('test-email-from');
       if(list){
-        list.innerHTML=d.accounts.map(function(a){
-          var statusColor=!a.configured?'var(--faint)':a.ready?'var(--green)':'var(--red)';
-          var statusText=!a.configured?'No Password':a.ready?'Ready':'Error';
-          var toggleChecked=a.enabled?'checked':'';
-          var toggleDisabled=!a.ready?'disabled':'';
-          return '<div class="account-card">'
-            +'<div style="width:10px;height:10px;border-radius:50%;background:'+statusColor+';box-shadow:0 0 6px '+statusColor+';flex-shrink:0"></div>'
-            +'<div style="flex:1;min-width:0">'
-            +'<div style="font-size:.82rem;font-weight:700;color:var(--ink)">'+a.user+'</div>'
-            +'<div style="font-size:.68rem;color:var(--faint);margin-top:2px">'+a.host+':'+a.port
-            +(a.error&&!a.ready?' &mdash; <span style="color:var(--red)">'+a.error.slice(0,60)+'</span>':'')
-            +'</div></div>'
-            +'<span style="font-size:.66rem;font-weight:700;padding:3px 10px;border-radius:99px;letter-spacing:.03em;background:'
-            +(!a.configured?'rgba(150,150,150,.12)':a.ready?'rgba(34,197,94,.12)':'rgba(239,68,68,.12)')
-            +';color:'+statusColor+'">'+statusText+'</span>'
-            +'<label style="position:relative;width:36px;height:20px;flex-shrink:0;cursor:'+(a.ready?'pointer':'not-allowed')+'">'
-            +'<input type="checkbox" '+toggleChecked+' '+toggleDisabled+' onchange="toggleAccount(\\\''+a.user+'\\\',this.checked)" style="display:none">'
-            +'<span style="position:absolute;inset:0;border-radius:10px;transition:.2s;background:'+(a.enabled?'var(--accent)':'var(--border)')+'">'
-            +'<span style="position:absolute;top:2px;left:'+(a.enabled?'18px':'2px')+';width:16px;height:16px;border-radius:50%;background:white;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)"></span>'
-            +'</span></label>'
-            +'</div>';
-        }).join('');
+        var groups={};
+        d.accounts.forEach(function(a){
+          var prov=a.host.includes('office365')||a.host.includes('outlook')?'Outlook'
+            :a.host.includes('gmail')?'Gmail'
+            :a.host.includes('privateemail')?'PrivateEmail':'Other';
+          if(!groups[prov])groups[prov]=[];
+          groups[prov].push(a);
+        });
+        var html='';
+        var order=['Outlook','Gmail','PrivateEmail','Other'];
+        order.forEach(function(prov){
+          if(!groups[prov]||!groups[prov].length)return;
+          html+='<div class="acct-group-label">'+prov+' ('+groups[prov].length+')</div><div class="acct-grid">';
+          groups[prov].forEach(function(a){
+            var statusColor=!a.configured?'var(--faint)':a.ready?'var(--green)':'var(--red)';
+            var statusText=!a.configured?'No Password':a.ready?'Ready':'Error';
+            var toggleChecked=a.enabled?'checked':'';
+            var toggleDisabled=!a.ready?'disabled':'';
+            var displayName=a.name||a.user.split('@')[0];
+            html+='<div class="account-card">'
+              +'<div style="display:flex;align-items:center;justify-content:space-between">'
+              +'<div style="display:flex;align-items:center;gap:8px">'
+              +'<div style="width:8px;height:8px;border-radius:50%;background:'+statusColor+';box-shadow:0 0 6px '+statusColor+'"></div>'
+              +'<span style="font-size:.78rem;font-weight:700;color:var(--ink)">'+displayName+'</span>'
+              +'</div>'
+              +'<label style="position:relative;width:36px;height:20px;flex-shrink:0;cursor:'+(a.ready?'pointer':'not-allowed')+'">'
+              +'<input type="checkbox" '+toggleChecked+' '+toggleDisabled+' onchange="toggleAccount(\\\''+a.user+'\\\',this.checked)" style="display:none">'
+              +'<span style="position:absolute;inset:0;border-radius:10px;transition:.2s;background:'+(a.enabled?'var(--accent)':'var(--border)')+'">'
+              +'<span style="position:absolute;top:2px;left:'+(a.enabled?'18px':'2px')+';width:16px;height:16px;border-radius:50%;background:white;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)"></span>'
+              +'</span></label></div>'
+              +'<div style="font-size:.68rem;color:var(--muted);word-break:break-all">'+a.user+'</div>'
+              +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:auto">'
+              +'<span style="font-size:.62rem;color:var(--faint)">'+a.host+':'+a.port+'</span>'
+              +'<span style="font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:99px;letter-spacing:.03em;background:'
+              +(!a.configured?'rgba(150,150,150,.12)':a.ready?'rgba(34,197,94,.12)':'rgba(239,68,68,.12)')
+              +';color:'+statusColor+'">'+statusText+'</span>'
+              +'</div>'
+              +(a.error&&!a.ready?'<div style="font-size:.6rem;color:var(--red);margin-top:2px;word-break:break-all">'+a.error.slice(0,80)+'</div>':'')
+              +'</div>';
+          });
+          html+='</div>';
+        });
+        list.innerHTML=html;
       }
       if(sel){
         var prev=sel.value;
