@@ -458,14 +458,19 @@ function extractCountry(location) {
 
 function extractTelegram(bio, blog, socialMap) {
   if (socialMap && socialMap.telegram) {
-    const tm = socialMap.telegram.match(/t\.me\/([a-zA-Z][a-zA-Z0-9_]{3,31})/i);
+    const raw = socialMap.telegram;
+    const tm = raw.match(/t\.me\/([a-zA-Z][a-zA-Z0-9_]{3,31})/i);
     if (tm) return tm[1];
+    const plain = raw.match(/^@?([a-zA-Z][a-zA-Z0-9_]{3,31})$/);
+    if (plain) return plain[1];
   }
-  const combined = bio + ' ' + blog;
-  const m = combined.match(/(?:t\.me\/|telegram[:\s]*@?|tg[:\s]*@?)([a-zA-Z][a-zA-Z0-9_]{3,31})/i);
+  const combined = (bio || '') + ' ' + (blog || '');
+  const m = combined.match(/(?:https?:\/\/)?t\.me\/([a-zA-Z][a-zA-Z0-9_]{3,31})/i);
   if (m) return m[1];
-  const m2 = combined.match(/telegram[:\s]+([a-zA-Z][a-zA-Z0-9_]{3,31})/i);
+  const m2 = combined.match(/(?:telegram|tg)[:\s]*@?([a-zA-Z][a-zA-Z0-9_]{3,31})/i);
   if (m2) return m2[1];
+  const m3 = combined.match(/@([a-zA-Z][a-zA-Z0-9_]{3,31})(?:\s|$|\)|,)/);
+  if (m3 && !m3[1].match(/^(gmail|yahoo|hotmail|outlook|github|twitter|instagram|facebook)$/i)) return m3[1];
   return '';
 }
 
@@ -1446,7 +1451,10 @@ function dashboardHTML() {
   <div id="nav-collected" class="nav-page" style="display:none">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <span class="sec-title">Collected Emails</span>
-      <a href="/export.csv" class="btn-action" style="text-decoration:none;font-size:.72rem;padding:5px 14px">&#11015; Export CSV</a>
+      <span style="display:flex;gap:8px">
+        <a href="/export-telegram.csv" class="btn-action" style="text-decoration:none;font-size:.72rem;padding:5px 14px;background:rgba(37,99,235,.1);color:var(--blue)">&#128172; Export Telegram</a>
+        <a href="/export.csv" class="btn-action" style="text-decoration:none;font-size:.72rem;padding:5px 14px">&#11015; Export All</a>
+      </span>
     </div>
 
   <!-- Collected panel -->
@@ -2957,6 +2965,24 @@ function startDashboard(port = 3000) {
       res.writeHead(200, {
         'Content-Type': 'text/csv',
         'Content-Disposition': 'attachment; filename="realman-emails-' + new Date().toISOString().slice(0,10) + '.csv"'
+      });
+      res.end(csv);
+      return;
+    }
+
+    // ── GET /export-telegram.csv ─────────────────────────────────────────
+    if (req.method === 'GET' && req.url === '/export-telegram.csv') {
+      const allRows = dbAllEmails().filter(e => !e.email.startsWith('_no_email_') && e.telegram);
+      const COLS = ['email','name','login','telegram','telegram_url','country','location','company','followers','profile'];
+      const csv = [COLS.join(','),
+        ...allRows.map(e => {
+          const row = { ...e, telegram_url: e.telegram ? 'https://t.me/' + e.telegram : '' };
+          return COLS.map(k => '"' + String(row[k]??'').replace(/"/g,'""') + '"').join(',');
+        })
+      ].join('\n');
+      res.writeHead(200, {
+        'Content-Type': 'text/csv',
+        'Content-Disposition': 'attachment; filename="realman-telegram-' + new Date().toISOString().slice(0,10) + '.csv"'
       });
       res.end(csv);
       return;
