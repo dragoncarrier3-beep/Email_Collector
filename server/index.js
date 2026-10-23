@@ -1105,7 +1105,10 @@ function dashboardHTML() {
   .filter-row td{padding:3px 4px;background:var(--card-2);border-bottom:1px solid var(--border)}
   .col-filter-styled{width:100%;background:var(--card);border:1px solid var(--border);color:var(--ink);border-radius:var(--radius-xs);padding:3px 5px;font-size:.66rem;outline:none;transition:var(--transition)}
   .col-filter-styled:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-bg)}
-  .av{width:26px;height:26px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:5px;background:var(--bg-2);border:1.5px solid var(--border);transition:var(--transition)}
+  .av{width:26px;height:26px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:5px;background:var(--bg-2);border:1.5px solid var(--border);transition:var(--transition);cursor:pointer}
+  .av:hover{border-color:var(--accent);box-shadow:0 0 8px var(--accent-glow);transform:scale(1.15)}
+  .av-lightbox{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:none;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(4px)}
+  .av-lightbox img{max-width:320px;max-height:320px;border-radius:16px;box-shadow:0 8px 40px rgba(0,0,0,.5);border:3px solid var(--border);object-fit:cover}
   tr:hover .av{border-color:var(--accent)}
   td:hover .av+a,td:hover span>.av+a{opacity:1!important}
   .av-ph{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--bg-2),var(--card-2));display:inline-flex;align-items:center;justify-content:center;font-size:.62rem;color:var(--faint);vertical-align:middle;margin-right:5px;font-weight:700;border:1.5px solid var(--border)}
@@ -1283,6 +1286,7 @@ function dashboardHTML() {
   <div class="main-content">
   <!-- Toast -->
   <div id="send-toast"></div>
+  <div class="av-lightbox" id="av-lightbox" onclick="this.style.display='none'"><img id="av-lightbox-img" src="" alt=""></div>
 
   <!-- ── Live Progress Banners (visible on ALL tabs) ── -->
   <div id="progress-banners" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
@@ -1748,6 +1752,14 @@ window.onerror=function(msg,url,line,col,err){
   d.textContent='JS ERROR: '+msg+' (line '+line+', col '+col+')';
   document.body.appendChild(d);
 };
+document.addEventListener('click',function(ev){
+  var img=ev.target.closest('.av');
+  if(!img||!img.src)return;
+  var lb=document.getElementById('av-lightbox');
+  var lbImg=document.getElementById('av-lightbox-img');
+  lbImg.src=img.src.replace(/[?&]s=\d+/,'')+'?s=400';
+  lb.style.display='flex';
+});
 // ── Theme ────────────────────────────────────────────────────────────────
 (function(){
   function applyTheme(t){
